@@ -2,7 +2,7 @@
 
 **English** | [Polski](README.pl.md)
 
-Documentation for plugin version **1.02** (ResourceSpace 11).
+Documentation for plugin version **1.03** (ResourceSpace 11).
 *(since X.YY)* marks the plugin version in which a feature first appeared. Features without
 a mark have been available since 1.00. Change history (in Polish): [CHANGELOG.md](CHANGELOG.md).
 
@@ -19,7 +19,7 @@ can open this page.
 
 **What a plugin cannot do:** it only sees requests that reach ResourceSpace's PHP code. Static
 files, the web server itself and the network are outside its reach – the options page contains
-templates for nginx and fail2ban for those parts. Virtual patches do not replace updates: keep
+templates for nginx and fail2ban for those parts (Apache: see "Apache instead of nginx"). Virtual patches do not replace updates: keep
 ResourceSpace up to date and report weaknesses to the ResourceSpace team.
 
 ---
@@ -70,7 +70,7 @@ on SimpleSAMLphp pages. Then:
 **Verify after activation** (the behaviour depends on the SimpleSAMLphp version in ResourceSpace
 11): open the local login page from an address outside the allowlist – it should answer "Request
 blocked". If it does not, SimpleSAMLphp does not load ResourceSpace on your server: use the nginx
-template from the options page instead.
+template from the options page (Apache: "Apache instead of nginx") instead.
 
 ## Firewall
 
@@ -104,7 +104,8 @@ Blocked requests get only a short answer with a reference number; the reason is 
   empty = not sent.
 
 Other headers (HSTS, X-Frame-Options, X-Content-Type-Options, Referrer-Policy) and
-`server_tokens off` belong to nginx.
+the server banner belong to the web server (nginx: `server_tokens off`; Apache: `ServerTokens Prod`,
+`ServerSignature Off` – see "Apache instead of nginx").
 
 ## Deletion protection *(since 1.01)*
 
@@ -249,6 +250,50 @@ sudo rm -f <filestore>/tmp/querycache/plugins_*   # query cache of the plugin li
   lines and test login, SSO, the API and reports. A fault inside the plugin never stops a page –
   errors are caught and only written to the debug log.
 
+## Apache instead of nginx
+
+The checks of the plugin do not depend on the web server. The server rules from the options page
+(written for nginx) look like this in Apache – modules `headers` and `remoteip`
+(`sudo a2enmod headers remoteip` on Ubuntu / Debian, loaded by default on the RHEL family):
+
+```apache
+# Server banner - /etc/apache2/conf-available/security.conf (RHEL: /etc/httpd/conf.d/security.conf)
+ServerTokens Prod
+ServerSignature Off
+
+# VirtualHost of ResourceSpace
+<Directory <RS_ROOT>>
+    Options -Indexes +FollowSymLinks
+</Directory>
+
+# SimpleSAMLphp: local login form and admin pages only from these addresses (SSO stays open)
+<LocationMatch "^/plugins/simplesaml/lib/(public|www)/(admin|module\.php/(admin|core/(login|loginuserpass|frontpage)))">
+    Require ip 192.0.2.10
+</LocationMatch>
+
+# no access to hidden and backup files
+<LocationMatch "/\.(?!well-known)">
+    Require all denied
+</LocationMatch>
+<FilesMatch "\.(bak|old|orig|sql|swp|log)$">
+    Require all denied
+</FilesMatch>
+
+# behind a load balancer / reverse proxy: the real client address in REMOTE_ADDR
+RemoteIPHeader X-Forwarded-For
+RemoteIPTrustedProxy 192.0.2.1
+```
+
+- With `mod_remoteip` Apache already passes the real client address – leave "Trusted proxies" in
+  the plugin empty. Without it, enter the proxy addresses there.
+- Apache has no built-in equivalent of nginx `limit_req`. The plugin's own limits (API login lockout,
+  SimpleSAMLphp login limit) work anyway; for more use fail2ban (the jail from the options page reads
+  the plugin's log, so it is the same for Apache) and optionally `mod_evasive` or ModSecurity.
+- The `X-Powered-By` header is removed by the plugin; HSTS and the other headers can be set with
+  `Header always set ...` (mod_headers).
+- Emergency switch with Apache on the RHEL family: `sudo -u apache touch <filestore>/security_guard/disabled`.
+- Check and reload: `sudo apachectl configtest`, then `sudo systemctl reload apache2` (RHEL: `httpd`).
+
 ## Installation and files on the server
 
 ### Download and installation
@@ -256,7 +301,8 @@ sudo rm -f <filestore>/tmp/querycache/plugins_*   # query cache of the plugin li
 The plugin is distributed as a `security_guard-<version>.zip` archive on the releases page:
 <https://github.com/s29829/security_guard/releases>. The archive contains the folder `security_guard/` with the code,
 license and documentation. Below, `<RS_ROOT>` is the ResourceSpace installation folder (e.g.
-`/var/www/resourcespace`) and `www-data` is the web server user (e.g. `apache` on other systems).
+`/var/www/resourcespace`) and `www-data:www-data` is the user and group that run PHP – with Apache on RHEL, Rocky, Alma or
+Fedora `apache:apache` (see "nginx or Apache" below).
 
 **In the browser:** Plugin Manager > Upload a plugin > choose the `.zip` file > Upload (when
 updating: **Overwrite**).
@@ -282,6 +328,41 @@ sudo chown -R www-data:www-data <RS_ROOT>/plugins/security_guard
 ```
 
 Update: `sudo git -C <RS_ROOT>/plugins/security_guard pull`.
+
+### nginx or Apache
+
+The plugin works the same with both web servers. Only the user that runs PHP, the service names
+and a few server settings differ – use the user and group from the table in the commands above:
+
+| | nginx + PHP-FPM (Ubuntu / Debian) | Apache (Ubuntu / Debian) | Apache (RHEL, Rocky, Alma, Fedora) |
+|---|---|---|---|
+| User:group that runs PHP | `www-data:www-data` | `www-data:www-data` | `apache:apache` |
+| Reload after an update | `sudo systemctl restart php8.3-fpm` | mod_php: `sudo systemctl reload apache2`; PHP-FPM: `sudo systemctl restart php8.3-fpm` | mod_php: `sudo systemctl reload httpd`; PHP-FPM: `sudo systemctl restart php-fpm` |
+
+- **Who runs PHP:** with Apache and mod_php the Apache user; with PHP-FPM (nginx or Apache) the user
+  of the PHP-FPM pool (`user =` / `group =` in `/etc/php/<version>/fpm/pool.d/www.conf`, on the RHEL
+  family `/etc/php-fpm.d/www.conf`). Check: `ps -o user= -C php-fpm8.3,php-fpm,apache2,httpd | sort -u`.
+- **Permissions:** folders `755`, files `644`, owner = that user and group (commands above). The plugin
+  files only need to be readable; `<filestore>` must be writable for that user – exactly as
+  ResourceSpace itself requires.
+- **No directory listings (Apache):** Apache on Ubuntu / Debian allows listings under `/var/www`
+  (`Options Indexes` in `apache2.conf`). The plugin keeps its settings in
+  `<filestore>/<plugin>/data_<key>/`, and a listing would show the folder name. Switch listings off for
+  ResourceSpace (VirtualHost or `apache2.conf` / `httpd.conf`) and reload Apache:
+
+  ```apache
+  <Directory <RS_ROOT>>
+      Options -Indexes +FollowSymLinks
+  </Directory>
+  ```
+
+  nginx shows no listings unless `autoindex on` is set.
+- **SELinux (RHEL family):** after unpacking restore the file labels:
+  `sudo restorecon -R <RS_ROOT>/plugins/security_guard`. The filestore needs the writable label (usually set when
+  ResourceSpace was installed): `sudo semanage fcontext -a -t httpd_sys_rw_content_t "<filestore>(/.*)?"`
+  and `sudo restorecon -R <filestore>`.
+- **Server rules** (rate limits, hidden files, SimpleSAMLphp panel, server banner): the options page
+  shows nginx templates; the Apache equivalents are in "Apache instead of nginx" below.
 
 Finally: System > Plugins, activate "Security Guard" and click **Options**. With the default
 settings all patches except "One session per account" are on, the firewall lists are empty and

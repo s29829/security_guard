@@ -3,6 +3,9 @@
 Numeracja wtyczki: 1.00, 1.01, 1.02 … (+0.01 przy każdej zmianie, `tools/release.py bump`).
 Wersja wtyczki w `security_guard.yaml`; wersja całego repozytorium w pliku `VERSION` (zob. `CHANGELOG.md` w katalogu głównym).
 
+## [1.03] - 2026-11-13
+- Dokumentacja: instalacja na Apache (Ubuntu/Debian i rodzina RHEL) – użytkownik i grupa uruchamiające PHP (mod_php / PHP-FPM), uprawnienia, wyłączenie listowania katalogów (Options -Indexes), SELinux; odpowiedniki reguł nginx dla Apache (ServerTokens, SimpleSAMLphp, ukryte pliki, mod_remoteip, limity).
+
 ## [1.02] - 2026-11-13
 - Powiadomienia o incydentach bezpieczeństwa do wskazanych użytkowników i grup użytkowników: powiadomienie ResourceSpace i/lub e-mail, wybór rodzajów incydentów (zablokowane ataki, ataki na logowanie, usuwanie wielu zasobów, wykrycia bez blokady, zmiany Security Guard), ograniczenie częstotliwości (na regułę i adres oraz na godzinę), powiadomienie testowe, zmiany ustawień w logu; pozycja w kontroli konfiguracji.
 

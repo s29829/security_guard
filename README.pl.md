@@ -2,7 +2,7 @@
 
 [English](README.md) | **Polski**
 
-Dokumentacja dla wersji wtyczki **1.02** (ResourceSpace 11).
+Dokumentacja dla wersji wtyczki **1.03** (ResourceSpace 11).
 Znacznik *(od X.YY)* oznacza wersję wtyczki, od której funkcja jest dostępna. Funkcje bez
 znacznika są dostępne od wersji 1.00. Historia zmian: [CHANGELOG.md](CHANGELOG.md).
 
@@ -20,7 +20,7 @@ wskazanych użytkowników i grupy użytkowników *(od 1.02)*.
 
 **Czego wtyczka nie zrobi:** widzi tylko żądania, które docierają do kodu PHP ResourceSpace. Pliki
 statyczne, sam serwer WWW i sieć są poza jej zasięgiem – na stronie opcji są szablony nginx
-i fail2ban do tych części. Wirtualne łatki nie zastępują aktualizacji: aktualizuj ResourceSpace
+i fail2ban do tych części (Apache: zob. „Apache zamiast nginx”). Wirtualne łatki nie zastępują aktualizacji: aktualizuj ResourceSpace
 i zgłaszaj słabości zespołowi ResourceSpace.
 
 ---
@@ -70,7 +70,7 @@ na stronach SimpleSAMLphp. Wtedy:
 
 **Sprawdź po aktywacji** (zależy od wersji SimpleSAMLphp w ResourceSpace 11): otwórz lokalną
 stronę logowania z adresu spoza listy – powinna odpowiedzieć „Request blocked”. Jeśli nie,
-SimpleSAMLphp na tym serwerze nie ładuje ResourceSpace: użyj szablonu nginx ze strony opcji.
+SimpleSAMLphp na tym serwerze nie ładuje ResourceSpace: użyj szablonu nginx ze strony opcji (Apache: „Apache zamiast nginx”).
 
 ## Firewall
 
@@ -104,7 +104,8 @@ Zablokowane żądanie dostaje tylko krótką odpowiedź z numerem referencyjnym;
   puste = nagłówek nie jest wysyłany.
 
 Pozostałe nagłówki (HSTS, X-Frame-Options, X-Content-Type-Options, Referrer-Policy) i
-`server_tokens off` należą do nginx.
+baner serwera należą do serwera WWW (nginx: `server_tokens off`; Apache: `ServerTokens Prod`,
+`ServerSignature Off` – zob. „Apache zamiast nginx”).
 
 ## Ochrona przed usuwaniem *(od 1.01)*
 
@@ -249,6 +250,50 @@ sudo rm -f <filestore>/tmp/querycache/plugins_*   # cache listy wtyczek ($tempdi
   `block` i przetestuj logowanie, SSO, API i raporty. Błąd wewnątrz wtyczki nigdy nie zatrzymuje
   strony – jest przechwytywany i zapisywany tylko w debug logu.
 
+## Apache zamiast nginx
+
+Kontrole wtyczki nie zależą od serwera WWW. Reguły serwera ze strony opcji (napisane dla nginx)
+w Apache wyglądają tak – moduły `headers` i `remoteip` (`sudo a2enmod headers remoteip` w Ubuntu / Debian,
+w rodzinie RHEL ładowane domyślnie):
+
+```apache
+# Baner serwera - /etc/apache2/conf-available/security.conf (RHEL: /etc/httpd/conf.d/security.conf)
+ServerTokens Prod
+ServerSignature Off
+
+# VirtualHost ResourceSpace
+<Directory <RS_ROOT>>
+    Options -Indexes +FollowSymLinks
+</Directory>
+
+# SimpleSAMLphp: lokalny formularz logowania i strony admina tylko z tych adresów (SSO bez zmian)
+<LocationMatch "^/plugins/simplesaml/lib/(public|www)/(admin|module\.php/(admin|core/(login|loginuserpass|frontpage)))">
+    Require ip 192.0.2.10
+</LocationMatch>
+
+# brak dostępu do ukrytych plików i kopii zapasowych
+<LocationMatch "/\.(?!well-known)">
+    Require all denied
+</LocationMatch>
+<FilesMatch "\.(bak|old|orig|sql|swp|log)$">
+    Require all denied
+</FilesMatch>
+
+# za load balancerem / reverse proxy: prawdziwy adres klienta w REMOTE_ADDR
+RemoteIPHeader X-Forwarded-For
+RemoteIPTrustedProxy 192.0.2.1
+```
+
+- Z `mod_remoteip` Apache sam przekazuje prawdziwy adres klienta – pole „Trusted proxies” we wtyczce
+  zostaw puste. Bez niego wpisz tam adresy proxy.
+- Apache nie ma wbudowanego odpowiednika `limit_req` z nginx. Limity wtyczki (blokada logowania przez
+  API, limit logowania SimpleSAMLphp) działają niezależnie; dodatkowo użyj fail2ban (jail ze strony
+  opcji czyta log wtyczki, więc jest taki sam dla Apache) i ewentualnie `mod_evasive` albo ModSecurity.
+- Nagłówek `X-Powered-By` usuwa wtyczka; HSTS i pozostałe nagłówki można ustawić przez
+  `Header always set ...` (mod_headers).
+- Wyłącznik awaryjny przy Apache w rodzinie RHEL: `sudo -u apache touch <filestore>/security_guard/disabled`.
+- Sprawdzenie i przeładowanie: `sudo apachectl configtest`, potem `sudo systemctl reload apache2` (RHEL: `httpd`).
+
 ## Instalacja i pliki na serwerze
 
 ### Pobranie i instalacja
@@ -256,7 +301,8 @@ sudo rm -f <filestore>/tmp/querycache/plugins_*   # cache listy wtyczek ($tempdi
 Wtyczka jest dystrybuowana jako archiwum `security_guard-<wersja>.zip` na stronie wydań:
 <https://github.com/s29829/security_guard/releases>. Archiwum zawiera katalog `security_guard/` z kodem, licencją
 i dokumentacją. Poniżej `<RS_ROOT>` to katalog instalacji ResourceSpace (np.
-`/var/www/resourcespace`), a `www-data` to użytkownik serwera WWW (w innych systemach np. `apache`).
+`/var/www/resourcespace`), a `www-data:www-data` to użytkownik i grupa, które uruchamiają PHP – przy Apache w RHEL, Rocky, Alma
+czy Fedorze `apache:apache` (zob. „nginx czy Apache” niżej).
 
 **Przez przeglądarkę:** Plugin Manager > Upload a plugin > wybierz plik `.zip` > Upload (przy
 aktualizacji: **Overwrite**).
@@ -282,6 +328,41 @@ sudo chown -R www-data:www-data <RS_ROOT>/plugins/security_guard
 ```
 
 Aktualizacja: `sudo git -C <RS_ROOT>/plugins/security_guard pull`.
+
+### nginx czy Apache
+
+Wtyczka działa tak samo z oboma serwerami WWW. Różnią się tylko użytkownik uruchamiający PHP, nazwy
+usług i kilka ustawień serwera – w poleceniach wyżej użyj użytkownika i grupy z tabeli:
+
+| | nginx + PHP-FPM (Ubuntu / Debian) | Apache (Ubuntu / Debian) | Apache (RHEL, Rocky, Alma, Fedora) |
+|---|---|---|---|
+| Użytkownik:grupa uruchamiające PHP | `www-data:www-data` | `www-data:www-data` | `apache:apache` |
+| Przeładowanie po aktualizacji | `sudo systemctl restart php8.3-fpm` | mod_php: `sudo systemctl reload apache2`; PHP-FPM: `sudo systemctl restart php8.3-fpm` | mod_php: `sudo systemctl reload httpd`; PHP-FPM: `sudo systemctl restart php-fpm` |
+
+- **Kto uruchamia PHP:** przy Apache z mod_php – użytkownik Apache; przy PHP-FPM (nginx lub Apache) –
+  użytkownik puli PHP-FPM (`user =` / `group =` w `/etc/php/<wersja>/fpm/pool.d/www.conf`, w rodzinie RHEL
+  `/etc/php-fpm.d/www.conf`). Sprawdzenie: `ps -o user= -C php-fpm8.3,php-fpm,apache2,httpd | sort -u`.
+- **Uprawnienia:** katalogi `755`, pliki `644`, właściciel = ten użytkownik i grupa (polecenia wyżej).
+  Pliki wtyczki muszą być tylko czytelne; `<filestore>` musi być zapisywalny dla tego użytkownika – tak
+  samo, jak wymaga tego ResourceSpace.
+- **Bez listowania katalogów (Apache):** Apache w Ubuntu / Debian pozwala listować katalogi w `/var/www`
+  (`Options Indexes` w `apache2.conf`). Wtyczka trzyma ustawienia w `<filestore>/<wtyczka>/data_<klucz>/`,
+  a listing pokazałby nazwę tego katalogu. Wyłącz listowanie dla ResourceSpace (VirtualHost albo
+  `apache2.conf` / `httpd.conf`) i przeładuj Apache:
+
+  ```apache
+  <Directory <RS_ROOT>>
+      Options -Indexes +FollowSymLinks
+  </Directory>
+  ```
+
+  nginx nie listuje katalogów, jeśli nie ustawiono `autoindex on`.
+- **SELinux (rodzina RHEL):** po rozpakowaniu przywróć etykiety plików:
+  `sudo restorecon -R <RS_ROOT>/plugins/security_guard`. Filestore potrzebuje etykiety do zapisu (zwykle ustawionej
+  przy instalacji ResourceSpace): `sudo semanage fcontext -a -t httpd_sys_rw_content_t "<filestore>(/.*)?"`
+  i `sudo restorecon -R <filestore>`.
+- **Reguły serwera** (limity zapytań, ukryte pliki, panel SimpleSAMLphp, baner serwera): strona opcji
+  pokazuje szablony nginx; odpowiedniki dla Apache są w „Apache zamiast nginx” niżej.
 
 Na koniec: System > Plugins, aktywuj „Security Guard” i kliknij **Options**. W ustawieniach
 domyślnych włączone są wszystkie łatki poza „One session per account”, listy firewalla są puste,
