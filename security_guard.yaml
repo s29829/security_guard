@@ -1,5 +1,5 @@
 name: security_guard
-version: 1.01
+version: 1.02
 title: Security Guard
 desc: Virtual patches for known ResourceSpace weaknesses and a light application firewall - IP allow/block lists, scanner blocking, API and SimpleSAMLphp login limits, security log for fail2ban
 author: Jacek Kowalczyk

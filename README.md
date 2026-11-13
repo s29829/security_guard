@@ -2,7 +2,7 @@
 
 **English** | [Polski](README.pl.md)
 
-Documentation for plugin version **1.01** (ResourceSpace 11).
+Documentation for plugin version **1.02** (ResourceSpace 11).
 *(since X.YY)* marks the plugin version in which a feature first appeared. Features without
 a mark have been available since 1.00. Change history (in Polish): [CHANGELOG.md](CHANGELOG.md).
 
@@ -11,7 +11,8 @@ itself (**virtual patches**) and works as a **light application firewall**: IP a
 lists, scanner blocking, login limits for the API and SimpleSAMLphp, attack patterns in
 parameters, and a security log that fail2ban can use to ban addresses in the system firewall.
 It also protects against **deleting many resources at once** (approval by another administrator)
-and enforces a **share policy** (password, generated passwords, expiry) *(since 1.01)*.
+and enforces a **share policy** (password, generated passwords, expiry) *(since 1.01)*, and notifies
+chosen users and user groups about **security incidents** *(since 1.02)*.
 
 **Where:** System > Plugins > Security Guard > **Options**. Only administrators (permission `a`)
 can open this page.
@@ -165,6 +166,33 @@ and collections and for upload shares. Off by default; switch on "Share policy i
 
 Existing shares are not changed; the policy applies when a share is created or edited.
 
+## Incident notifications *(since 1.02)*
+
+Security incidents are sent to the chosen **users** (user names) and to all active members of the
+chosen **user groups**:
+
+- **ResourceSpace notification** (the bell / messages) with a link to the options page,
+- **e-mail** to the address of the user account (accounts with an address marked as invalid are
+  skipped; ResourceSpace must be able to send e-mail).
+
+Incident types (each can be switched on separately):
+
+| Type | Events |
+|---|---|
+| Blocked attacks | blocked addresses, scanners, admin pages / API keys from other addresses, API "function" confusion, report parameters, attack patterns in "block" mode, SimpleSAMLphp panel |
+| Login attacks | API login lockout, SimpleSAMLphp login limit |
+| Deletion of many resources | approval requests (also to the administrators when "Notify administrators" is on), blocked permanent deletion, approvals given |
+| Detections without blocking | attack patterns in "log only" mode, corrected login redirect, session hash in the URL |
+| Changes of Security Guard | settings saved (with the changed options), protection switched off, log cleared, plugin reset, test notification |
+
+Against floods: one notification per rule and address in N minutes (default 15) and at most M
+notifications per hour (default 30); the security log keeps every event. Notifications are sent only
+when something happens – normal requests stay free of database queries.
+
+"Send test notification" sends a test to the saved recipients with the saved channels. Users whose
+ResourceSpace preferences send every notification also by e-mail may get two e-mails – then leave
+only one channel on.
+
 ## Security log and fail2ban
 
 Every event is one line in `<filestore>/security_guard/data_<key>/events.log`, e.g.:
@@ -267,7 +295,7 @@ Everything the plugin stores is in `<filestore>/security_guard/`:
 - `data_<key>/settings.php` – settings (the key derives from `scramble_key`, so the files cannot be
   read by guessing the address),
 - `data_<key>/events.log`, `events.log.1` – security log,
-- `data_<key>/rate/` – login attempt counters (old ones are removed automatically),
+- `data_<key>/rate/` – login attempt and notification counters (old ones are removed automatically),
 - `data_<key>/deletion.json` – deletion requests and approvals *(since 1.01)*,
 - `disabled` – the emergency switch, only when you create it.
 

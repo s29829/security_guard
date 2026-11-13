@@ -113,7 +113,50 @@ function security_guard_defaults()
         'share_max_days'       => 30,
         'share_user_can_change' => true,  // users may choose another expiry date (up to the maximum)
         'share_allow_never'    => false,  // "Never" expires
+        // incident notifications (since 1.02)
+        'notify_enabled'       => false,
+        'notify_users'         => array(),  // user names
+        'notify_groups'        => array(),  // user group refs
+        'notify_events'        => array('attack', 'bruteforce', 'deletion', 'admin'),
+        'notify_screen'        => true,     // ResourceSpace notification (bell)
+        'notify_email'         => true,     // e-mail to the address of the user account
+        'notify_throttle'      => 15,       // minutes: one notification per rule and address
+        'notify_max_per_hour'  => 30,       // all notifications per hour
     );
+}
+
+// Incident categories: key => label (notifications, since 1.02)
+function security_guard_incident_categories()
+{
+    return array(
+        'attack'     => 'Blocked attacks (firewall, patches, attack patterns in "block" mode)',
+        'bruteforce' => 'Login attacks (API login lockout, SimpleSAMLphp login limit)',
+        'deletion'   => 'Deletion of many resources (approval requests, blocked permanent deletion, approvals given)',
+        'detection'  => 'Detections without blocking (attack patterns in "log only" mode, corrected login redirect, session in the URL)',
+        'admin'      => 'Changes of Security Guard (settings, protection switched off, log cleared, reset)',
+    );
+}
+
+// Category of a log event ('' = no notification)
+function security_guard_incident_category($action, $rule)
+{
+    if ($action === 'admin') {
+        return 'admin';
+    }
+    if (strpos($rule, 'delete_') === 0) {
+        // approval requests notify from security_guard_deletion_gate() (with the administrators)
+        return ($rule === 'delete_approval' || $rule === 'delete_grant_revoked' || $rule === 'delete_request_rejected') ? '' : 'deletion';
+    }
+    if ($action === 'block') {
+        if ($rule === 'api_lockout' || $rule === 'saml_bruteforce') {
+            return 'bruteforce';
+        }
+        return $rule === 'share_password' ? '' : 'attack';
+    }
+    if (($action === 'log' && strpos($rule, 'waf_') === 0) || ($action === 'fix' && ($rule === 'login_redirect' || $rule === 'get_session'))) {
+        return 'detection';
+    }
+    return '';
 }
 
 function security_guard_settings()
@@ -264,6 +307,14 @@ function security_guard_log($action, $rule, $detail = '', $ref = '')
         . ' path="/' . $clean(security_guard_path(), 200) . '"'
         . ($detail !== '' ? ' detail="' . $clean($detail, 300) . '"' : '') . "\n";
     file_put_contents($file, $line, FILE_APPEND | LOCK_EX);
+
+    // incident notification (only events; throttled)
+    if ($s['notify_enabled']) {
+        $category = security_guard_incident_category($action, $rule);
+        if ($category !== '' && in_array($category, $s['notify_events'], true)) {
+            security_guard_incident($category, $action, $rule, $detail, $ref);
+        }
+    }
 }
 
 // Stops the request. The answer only contains a reference (and, for rules the user can act on,
@@ -806,9 +857,13 @@ function security_guard_deletion_gate(array $s, $soft, $perm, $what, $api_user, 
         return;
     }
     list($id, $new) = security_guard_deletion_request($user, $soft, $perm, $what);
-    if ($new && $s['del_notify']) {
-        security_guard_notify_admins('Security Guard: ' . $user['username'] . ' asks for approval to delete ' . ($soft + $perm) . ' resource(s)'
-            . ($perm > 0 ? ' (' . $perm . ' permanently)' : '') . '. Request #' . $id . '.');
+    if ($new) {
+        $text = 'Security Guard: ' . $user['username'] . ' asks for approval to delete ' . ($soft + $perm) . ' resource(s)'
+            . ($perm > 0 ? ' (' . $perm . ' permanently)' : '') . '. Request #' . $id . '.';
+        $extra = ($s['notify_enabled'] && in_array('deletion', $s['notify_events'], true)) ? array_keys(security_guard_notify_recipients($s)) : array();
+        if ($s['del_notify'] || $extra) {
+            security_guard_notify_admins($text, $extra, $s['del_notify']);
+        }
     }
     security_guard_deny(403, 'delete_approval', $detail . ', request #' . $id, $json,
         'Deleting ' . ($soft + $perm) . ' resource(s)' . ($perm > 0 ? ' (' . $perm . ' permanently)' : '') . ' needs the approval of '
@@ -816,14 +871,18 @@ function security_guard_deletion_gate(array $s, $soft, $perm, $what, $api_user, 
         . 'After the approval (System > Plugins > Security Guard > Options) repeat the deletion.');
 }
 
-// ResourceSpace notification to the system administrators
-function security_guard_notify_admins($text)
+// ResourceSpace notification to the system administrators (and/or the given users)
+function security_guard_notify_admins($text, array $extra = array(), $admins = true)
 {
-    if (!function_exists('get_notification_users') || !function_exists('message_add')) {
+    if (!function_exists('message_add')) {
         return;
     }
     try {
-        $refs = array_values(array_filter(array_map('intval', array_column((array) get_notification_users('SYSTEM_ADMIN'), 'ref'))));
+        $refs = $extra;
+        if ($admins && function_exists('get_notification_users')) {
+            $refs = array_merge($refs, array_column((array) get_notification_users('SYSTEM_ADMIN'), 'ref'));
+        }
+        $refs = array_values(array_unique(array_filter(array_map('intval', $refs))));
         if ($refs) {
             message_add($refs, $text, rtrim((string) ($GLOBALS['baseurl'] ?? ''), '/') . '/plugins/security_guard/pages/setup.php');
         }
@@ -986,4 +1045,115 @@ function security_guard_share_script(array $s)
     if (document.readyState === "loading") { document.addEventListener("DOMContentLoaded", apply); } else { apply(); }
     new MutationObserver(schedule).observe(document.documentElement, {childList: true, subtree: true});
 })();';
+}
+
+// ---- Incident notifications (since 1.02) ------------------------------------------------------
+//
+// Sent only when an event is logged (never on normal requests), to the chosen users and to all
+// active members of the chosen user groups: ResourceSpace notification and/or e-mail. One
+// notification per category, rule and address in "notify_throttle" minutes, at most
+// "notify_max_per_hour" notifications per hour (the log keeps every event).
+
+// Recipients: [user ref => ['username' => .., 'email' => ..]]
+function security_guard_notify_recipients(array $s)
+{
+    $where  = array();
+    $params = array();
+    $users  = array_values(array_filter(array_map('strval', $s['notify_users']), 'strlen'));
+    $groups = array_values(array_filter(array_map('intval', $s['notify_groups'])));
+    if ($users) {
+        $where[] = 'username IN (' . implode(',', array_fill(0, count($users), '?')) . ')';
+        foreach ($users as $u) {
+            $params[] = 's';
+            $params[] = $u;
+        }
+    }
+    if ($groups) {
+        $where[] = 'usergroup IN (' . implode(',', array_fill(0, count($groups), '?')) . ')';
+        foreach ($groups as $g) {
+            $params[] = 'i';
+            $params[] = $g;
+        }
+    }
+    if (!$where || !function_exists('ps_query')) {
+        return array();
+    }
+    $out = array();
+    try {
+        foreach (ps_query('SELECT ref, username, email, email_invalid FROM user WHERE approved = 1 AND (' . implode(' OR ', $where) . ')', $params) as $r) {
+            $out[(int) $r['ref']] = array('username' => (string) $r['username'], 'email' => empty($r['email_invalid']) ? trim((string) $r['email']) : '');
+        }
+    } catch (Throwable $e) {
+        return array();
+    }
+    return $out;
+}
+
+// Sends one notification; returns the number of recipients
+function security_guard_send_notification(array $s, $subject, $text, $short)
+{
+    $recipients = security_guard_notify_recipients($s);
+    if (!$recipients) {
+        return 0;
+    }
+    $url = rtrim((string) ($GLOBALS['baseurl'] ?? ''), '/') . '/plugins/security_guard/pages/setup.php';
+    if ($s['notify_screen'] && function_exists('message_add')) {
+        try {
+            message_add(array_keys($recipients), $short, $url);
+        } catch (Throwable $e) {
+            security_guard_log('log', 'notify_failed', 'message: ' . $e->getMessage());
+        }
+    }
+    if ($s['notify_email'] && function_exists('send_mail')) {
+        foreach ($recipients as $r) {
+            if ($r['email'] === '' || !filter_var($r['email'], FILTER_VALIDATE_EMAIL)) {
+                continue;
+            }
+            try {
+                send_mail($r['email'], $subject, $text . "\n\n" . $url);
+            } catch (Throwable $e) {
+                security_guard_log('log', 'notify_failed', 'e-mail: ' . $e->getMessage());
+            }
+        }
+    }
+    return count($recipients);
+}
+
+function security_guard_incident($category, $action, $rule, $detail, $ref)
+{
+    static $busy = false;
+    if ($busy) {
+        return; // no notifications about notifications
+    }
+    $busy = true;
+    try {
+        $s  = security_guard_settings();
+        $ip = security_guard_client_ip($s);
+        // throttle: one per category + rule + address, and a cap per hour
+        if (!security_guard_rate($category . '|' . $rule . '|' . $ip, 'notify', 1, max(1, (int) $s['notify_throttle']) * 60)
+            || !security_guard_rate('all', 'notify_hour', max(1, (int) $s['notify_max_per_hour']), 3600)) {
+            return;
+        }
+        $labels = security_guard_incident_categories();
+        $site   = (string) ($GLOBALS['applicationname'] ?? 'ResourceSpace');
+        $path   = '/' . security_guard_path();
+        $method = (string) ($_SERVER['REQUEST_METHOD'] ?? '');
+        $subject = '[Security Guard] ' . $site . ': ' . $rule . ($action === 'block' ? ' blocked' : '');
+        $text = 'Security Guard - ' . $site . "\n\n"
+            . 'Incident: ' . ($labels[$category] ?? $category) . "\n"
+            . 'Rule: ' . $rule . ' (' . $action . ")\n"
+            . 'Address: ' . $ip . "\n"
+            . ($action !== 'admin' ? 'Request: ' . $method . ' ' . $path . "\n" : '')
+            . ($detail !== '' ? 'Detail: ' . $detail . "\n" : '')
+            . ($ref !== '' ? 'Reference: ' . $ref . "\n" : '')
+            . 'Time: ' . date('Y-m-d H:i:s T') . "\n\n"
+            . 'Further notifications about the same rule and address are paused for ' . (int) $s['notify_throttle'] . ' minutes; the security log keeps every event.';
+        $short = 'Security Guard: ' . $rule . ($action === 'block' ? ' blocked' : '') . ' - ' . $ip
+            . ($action !== 'admin' ? ' (' . $method . ' ' . $path . ')' : '') . ($detail !== '' ? ': ' . $detail : '') . ($ref !== '' ? ' [' . $ref . ']' : '');
+        security_guard_send_notification($s, $subject, $text, function_exists('mb_substr') ? mb_substr($short, 0, 400) : substr($short, 0, 400));
+    } catch (Throwable $e) {
+        // a notification must never break the request
+    } finally {
+        $busy = false;
+    }
 }

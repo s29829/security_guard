@@ -214,6 +214,10 @@ function security_guard_checklist(array $s)
         . sprintf(', at most %d days, "Never" %s.', (int) ($g['resource_share_expire_days'] ?? 0), !empty($g['resource_share_expire_never']) ? 'allowed' : 'not allowed')
         . ($s['share_enabled'] ? ' (share policy of this plugin is on)' : ' Turn on the share policy below to enforce it.'));
 
+    $add($s['notify_enabled'] && ($s['notify_users'] || $s['notify_groups']) ? 'ok' : 'info', 'Incident notifications',
+        $s['notify_enabled'] ? sprintf('On: %d user name(s), %d user group(s), incidents: %s.', count($s['notify_users']), count($s['notify_groups']), implode(', ', $s['notify_events']) ?: 'none')
+            : 'Off - incidents are only written to the security log. Turn on "Incident notifications" below.');
+
     $add(is_file(security_guard_kill_file()) || !empty($g['security_guard_disable']) ? 'warn' : 'ok', 'Emergency switch',
         is_file(security_guard_kill_file()) ? 'The file ' . security_guard_kill_file() . ' exists - all checks are OFF.'
             : (!empty($g['security_guard_disable']) ? '$security_guard_disable is set in config.php - all checks are OFF.' : 'Not used.'));
@@ -354,4 +358,51 @@ function security_guard_deletion_revoke($user, array $admin)
         return true;
     });
     security_guard_log('log', 'delete_grant_revoked', 'user ' . (int) $user . ' by ' . $admin['username']);
+}
+
+// ---- Incident notifications (options page, since 1.02) ---------------------------------------
+
+// User groups: [ref => name]
+function security_guard_usergroups()
+{
+    $out = array();
+    try {
+        foreach (ps_query('SELECT ref, name FROM usergroup ORDER BY name', array()) as $g) {
+            $name = function_exists('i18n_get_translated') ? i18n_get_translated((string) $g['name']) : (string) $g['name'];
+            $out[(int) $g['ref']] = $name;
+        }
+    } catch (Throwable $e) {
+        return array();
+    }
+    return $out;
+}
+
+// User names that do not exist
+function security_guard_unknown_users(array $names)
+{
+    if (!$names) {
+        return array();
+    }
+    $params = array();
+    foreach ($names as $n) {
+        $params[] = 's';
+        $params[] = $n;
+    }
+    $found = array_map('strtolower', (array) ps_array('SELECT username value FROM user WHERE username IN (' . implode(',', array_fill(0, count($names), '?')) . ')', $params));
+    return array_values(array_filter($names, function ($n) use ($found) {
+        return !in_array(strtolower($n), $found, true);
+    }));
+}
+
+// Names of the settings that changed (for the log / "admin" notifications)
+function security_guard_settings_changes(array $old, array $new)
+{
+    $out = array();
+    foreach ($new as $k => $v) {
+        if (!array_key_exists($k, $old) || $old[$k] === $v) {
+            continue;
+        }
+        $out[] = is_bool($v) ? $k . '=' . ($v ? 'on' : 'off') : (is_array($v) ? $k : $k . '=' . (is_scalar($v) ? (string) $v : ''));
+    }
+    return array_slice($out, 0, 25);
 }

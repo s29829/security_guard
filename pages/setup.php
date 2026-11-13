@@ -26,7 +26,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action !== '') {
         foreach (array('enabled', 'patch_report_params', 'patch_login_redirect', 'patch_api_confusion', 'patch_api_lockout', 'patch_get_session',
             'force_random_session', 'saml_hide_errors', 'block_scanners', 'remove_powered_by',
             'del_enabled', 'del_force_trash', 'del_four_eyes', 'del_notify',
-            'share_enabled', 'share_require_password', 'share_generate_password', 'share_user_can_change', 'share_allow_never') as $k) {
+            'share_enabled', 'share_require_password', 'share_generate_password', 'share_user_can_change', 'share_allow_never',
+            'notify_enabled', 'notify_screen', 'notify_email') as $k) {
             $new[$k] = !empty($_POST[$k]);
         }
         $new['saml_panel'] = in_array($_POST['saml_panel'] ?? '', array('open', 'allowlist', 'block'), true) ? $_POST['saml_panel'] : 'open';
@@ -43,6 +44,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action !== '') {
         $new['share_max_days']        = max(1, min(3650, (int) ($_POST['share_max_days'] ?? 30)));
         $new['share_default_days']    = max(1, min($new['share_max_days'], (int) ($_POST['share_default_days'] ?? 14)));
         $new['permissions_policy'] = trim(preg_replace('/[\r\n]+/', ' ', (string) ($_POST['permissions_policy'] ?? '')));
+        $new['notify_throttle']     = max(1, min(1440, (int) ($_POST['notify_throttle'] ?? 15)));
+        $new['notify_max_per_hour'] = max(1, min(1000, (int) ($_POST['notify_max_per_hour'] ?? 30)));
+        $new['notify_events'] = array_values(array_intersect(array_keys(security_guard_incident_categories()), (array) ($_POST['notify_events'] ?? array())));
+        $new['notify_groups'] = array_values(array_unique(array_filter(array_map('intval', (array) ($_POST['notify_groups'] ?? array())))));
+        $new['notify_users']  = security_guard_lines($_POST['notify_users'] ?? '');
+        $unknown = security_guard_unknown_users($new['notify_users']);
+        if ($unknown) {
+            $errors[] = 'Unknown user name(s) in "Notify users": ' . implode(', ', $unknown) . '.';
+        }
+        if ($new['notify_enabled'] && !$new['notify_users'] && !$new['notify_groups']) {
+            $errors[] = 'Notifications are on, but no users or user groups are chosen.';
+        }
         foreach (array('trusted_proxies', 'blocklist', 'admin_ips', 'api_ips') as $k) {
             $new[$k] = security_guard_lines($_POST[$k] ?? '');
             foreach ($new[$k] as $ip) {
@@ -64,6 +77,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action !== '') {
         }
         if (!$errors) {
             if (security_guard_save_settings($new)) {
+                $changes = security_guard_settings_changes($settings, $new);
+                security_guard_log('admin', !$new['enabled'] && $settings['enabled'] ? 'protection_off' : 'settings_saved',
+                    'by ' . $username . ($changes ? ': ' . implode(', ', $changes) : ''));
                 redirect($self . '?done=saved');
                 exit;
             }
@@ -85,8 +101,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action !== '') {
             exit;
         }
         $errors[] = $err;
+    } elseif ($action === 'notify_test') {
+        $n = security_guard_send_notification($settings, '[Security Guard] ' . ($applicationname ?? 'ResourceSpace') . ': test notification',
+            "Security Guard - test notification\n\nSent by " . $username . ' from the options page at ' . date('Y-m-d H:i:s T') . '. No incident happened.',
+            'Security Guard: test notification sent by ' . $username . ' (no incident).');
+        if ($n > 0) {
+            security_guard_log('admin', 'notify_test', 'by ' . $username . ', ' . $n . ' recipient(s)');
+            redirect($self . '?done=notify_test&n=' . $n . '#sg-notify');
+            exit;
+        }
+        $errors[] = 'No recipients: save at least one user or user group in "Incident notifications" first (active accounts only).';
     } elseif ($action === 'clear_log') {
         if (security_guard_clear_log()) {
+            security_guard_log('admin', 'log_cleared', 'by ' . $username);
             redirect($self . '?done=log_cleared');
             exit;
         }
@@ -95,11 +122,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action !== '') {
         $reset_open = true;
         if (trim((string) ($_POST['reset_confirm'] ?? '')) !== 'RESET') {
             $errors[] = 'Not reset: type RESET (capital letters) to confirm.';
-        } elseif (!security_guard_reset()) {
-            $errors[] = 'The plugin could not be reset (check permissions of ' . security_guard_base_dir() . ').';
         } else {
-            redirect($self . '?done=reset');
-            exit;
+            security_guard_log('admin', 'plugin_reset', 'by ' . $username); // notification before the settings are deleted
+            if (security_guard_reset()) {
+                redirect($self . '?done=reset');
+                exit;
+            }
+            $errors[] = 'The plugin could not be reset (check permissions of ' . security_guard_base_dir() . ').';
         }
     }
 }
@@ -119,6 +148,9 @@ switch ((string) ($_GET['done'] ?? '')) {
         break;
     case 'del_revoke':
         $message = 'The approval was withdrawn.';
+        break;
+    case 'notify_test':
+        $message = 'Test notification sent to ' . (int) ($_GET['n'] ?? 0) . ' user(s).';
         break;
     case 'log_cleared':
         $message = 'The security log was deleted.';
@@ -191,6 +223,7 @@ include '../../../include/header.php';
         .sg-log { max-height: 420px; overflow: auto; }
         .sg-pre { white-space: pre; overflow: auto; padding: 8px; border: 1px solid rgba(128, 128, 128, 0.4); border-radius: 4px; font-family: monospace; font-size: 0.85em; max-height: 360px; }
         .sg-m0 { margin: 0 !important; } .sg-w5 { width: 5em; } .sg-w7 { width: 7em; } .sg-wide { width: 36em; max-width: 100%; }
+        .sg-list { max-height: 160px; overflow: auto; border: 1px solid rgba(128, 128, 128, 0.4); border-radius: 4px; padding: 4px 8px; }
         .sg-outline { background: transparent !important; border: 1px solid currentColor !important; color: inherit !important; }
     </style>
 
@@ -322,6 +355,37 @@ include '../../../include/header.php';
             ?>
         </div>
 
+        <div class="sg-box" id="sg-notify">
+            <h3>Incident notifications</h3>
+            <p class="sg-help sg-m0">Security incidents are sent to the chosen users and to all active members of the chosen user groups - as a ResourceSpace notification
+                and/or an e-mail to the address of their account. Only when something happens (never on normal requests); the security log keeps every event.</p>
+            <?php $check('notify_enabled', 'Notifications are on', ''); ?>
+            <div class="sg-grid">
+                <div><label for="sg-nu">Notify users (user names)</label>
+                    <textarea id="sg-nu" name="notify_users" spellcheck="false"><?php echo $h($lines($settings['notify_users'])); ?></textarea>
+                    <span class="sg-help">One user name per line.</span></div>
+                <div><label>Notify user groups</label>
+                    <div class="sg-list">
+                        <?php foreach (security_guard_usergroups() as $gref => $gname) { ?>
+                            <label class="sg-check sg-m0"><input type="checkbox" name="notify_groups[]" value="<?php echo (int) $gref; ?>"<?php echo in_array((int) $gref, $settings['notify_groups'], true) ? ' checked' : ''; ?>> <?php echo $h($gname); ?></label>
+                        <?php } ?>
+                    </div></div>
+                <div><label>Incidents</label>
+                    <?php foreach (security_guard_incident_categories() as $ck => $cl) { ?>
+                        <label class="sg-check sg-m0"><input type="checkbox" name="notify_events[]" value="<?php echo $h($ck); ?>"<?php echo in_array($ck, $settings['notify_events'], true) ? ' checked' : ''; ?>> <?php echo $h($cl); ?></label>
+                    <?php } ?>
+                </div>
+            </div>
+            <div class="sg-row">
+                <label><input type="checkbox" name="notify_screen" value="1"<?php echo $settings['notify_screen'] ? ' checked' : ''; ?>> ResourceSpace notification</label>
+                <label><input type="checkbox" name="notify_email" value="1"<?php echo $settings['notify_email'] ? ' checked' : ''; ?>> E-mail</label>
+                <label>one per rule and address in <input type="number" name="notify_throttle" min="1" max="1440" value="<?php echo (int) $settings['notify_throttle']; ?>" class="sg-w5"> minutes,</label>
+                <label>at most <input type="number" name="notify_max_per_hour" min="1" max="1000" value="<?php echo (int) $settings['notify_max_per_hour']; ?>" class="sg-w5"> per hour</label>
+            </div>
+            <p class="sg-help sg-m0">Users whose preferences send every ResourceSpace notification also by e-mail may get two e-mails - then leave only one channel on.
+                Save the settings, then use "Send test notification" below.</p>
+        </div>
+
         <div class="sg-box">
             <h3>Response headers and log</h3>
             <?php $check('remove_powered_by', 'Remove X-Powered-By', 'Hides the PHP version.'); ?>
@@ -332,6 +396,12 @@ include '../../../include/header.php';
         </div>
 
         <div class="sg-row"><button type="submit" name="action" value="save">Save settings</button></div>
+    </form>
+
+    <form method="post" action="<?php echo $h($self); ?>" class="sg-row">
+        <?php generateFormToken('security_guard'); ?>
+        <button type="submit" name="action" value="notify_test" class="sg-outline">Send test notification</button>
+        <span class="sg-help sg-m0">to the saved recipients, with the saved channels (also when notifications are off).</span>
     </form>
 
     <!-- Deletion approvals -->

@@ -2,7 +2,7 @@
 
 [English](README.md) | **Polski**
 
-Dokumentacja dla wersji wtyczki **1.01** (ResourceSpace 11).
+Dokumentacja dla wersji wtyczki **1.02** (ResourceSpace 11).
 Znacznik *(od X.YY)* oznacza wersję wtyczki, od której funkcja jest dostępna. Funkcje bez
 znacznika są dostępne od wersji 1.00. Historia zmian: [CHANGELOG.md](CHANGELOG.md).
 
@@ -12,7 +12,8 @@ dozwolonych i blokowanych adresów IP, blokowanie skanerów, limity logowania pr
 i SimpleSAMLphp, wzorce ataków w parametrach oraz log bezpieczeństwa, z którego fail2ban może
 blokować adresy w firewallu systemu. Chroni też przed **usunięciem wielu zasobów naraz**
 (zatwierdzenie przez drugiego administratora) i egzekwuje **politykę udostępniania** (hasło,
-generowane hasła, okres ważności) *(od 1.01)*.
+generowane hasła, okres ważności) *(od 1.01)*, a o **incydentach bezpieczeństwa** powiadamia
+wskazanych użytkowników i grupy użytkowników *(od 1.02)*.
 
 **Gdzie:** System > Plugins > Security Guard > **Options**. Stronę otwierają tylko administratorzy
 (uprawnienie `a`).
@@ -165,6 +166,33 @@ włącz „Share policy is on”.
 
 Istniejące udostępnienia się nie zmieniają; polityka działa przy tworzeniu i edycji udostępnienia.
 
+## Powiadomienia o incydentach *(od 1.02)*
+
+Incydenty bezpieczeństwa trafiają do wskazanych **użytkowników** (nazwy użytkowników) i do wszystkich
+aktywnych członków wskazanych **grup użytkowników**:
+
+- **powiadomienie ResourceSpace** (dzwonek / wiadomości) z linkiem do strony opcji,
+- **e-mail** na adres z konta użytkownika (konta z adresem oznaczonym jako nieprawidłowy są
+  pomijane; ResourceSpace musi mieć skonfigurowaną wysyłkę poczty).
+
+Rodzaje incydentów (każdy włączany osobno):
+
+| Rodzaj | Zdarzenia |
+|---|---|
+| Zablokowane ataki | blokowane adresy, skanery, strony admina / klucze API z innych adresów, pomylenie „function” w API, parametry raportów, wzorce ataków w trybie „block”, panel SimpleSAMLphp |
+| Ataki na logowanie | blokada logowania przez API, limit logowania SimpleSAMLphp |
+| Usuwanie wielu zasobów | wnioski o zatwierdzenie (także do administratorów, gdy włączone „Notify administrators”), zablokowane trwałe usuwanie, udzielone zgody |
+| Wykrycia bez blokady | wzorce ataków w trybie „log only”, poprawione przekierowanie po logowaniu, hash sesji w adresie |
+| Zmiany Security Guard | zapis ustawień (ze zmienionymi opcjami), wyłączenie ochrony, usunięcie logu, reset wtyczki, powiadomienie testowe |
+
+Przeciw zalewowi: jedno powiadomienie na regułę i adres w ciągu N minut (domyślnie 15) i najwyżej
+M powiadomień na godzinę (domyślnie 30); log bezpieczeństwa zapisuje każde zdarzenie. Powiadomienia
+są wysyłane tylko, gdy coś się dzieje – zwykłe żądania nadal nie odpytują bazy.
+
+„Send test notification” wysyła próbę do zapisanych odbiorców zapisanymi kanałami. Użytkownicy,
+którzy w preferencjach ResourceSpace mają wysyłanie każdego powiadomienia także e-mailem, mogą
+dostać dwa e-maile – wtedy zostaw włączony jeden kanał.
+
 ## Log bezpieczeństwa i fail2ban
 
 Każde zdarzenie to jeden wiersz w `<filestore>/security_guard/data_<klucz>/events.log`, np.:
@@ -268,7 +296,7 @@ Wszystko, co zapisuje wtyczka, jest w `<filestore>/security_guard/`:
 - `data_<klucz>/settings.php` – ustawienia (klucz pochodzi od `scramble_key`, więc plików nie da się
   odczytać, zgadując adres),
 - `data_<klucz>/events.log`, `events.log.1` – log bezpieczeństwa,
-- `data_<klucz>/rate/` – liczniki prób logowania (stare są usuwane automatycznie),
+- `data_<klucz>/rate/` – liczniki prób logowania i powiadomień (stare są usuwane automatycznie),
 - `data_<klucz>/deletion.json` – wnioski o zatwierdzenie usunięcia i zgody *(od 1.01)*,
 - `disabled` – wyłącznik awaryjny, tylko gdy go utworzysz.
 
