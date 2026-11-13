@@ -1,0 +1,10 @@
+name: security_guard
+version: 1.01
+title: Security Guard
+desc: Virtual patches for known ResourceSpace weaknesses and a light application firewall - IP allow/block lists, scanner blocking, API and SimpleSAMLphp login limits, security log for fail2ban
+author: Jacek Kowalczyk
+config_url: /plugins/security_guard/pages/setup.php
+default_priority: 1
+disable_group_select: 1
+icon: shield
+category: System
