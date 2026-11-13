@@ -214,6 +214,11 @@ function security_guard_checklist(array $s)
         . sprintf(', at most %d days, "Never" %s.', (int) ($g['resource_share_expire_days'] ?? 0), !empty($g['resource_share_expire_never']) ? 'allowed' : 'not allowed')
         . ($s['share_enabled'] ? ' (share policy of this plugin is on)' : ' Turn on the share policy below to enforce it.'));
 
+    $add($s['up_mode'] === 'enforce' ? 'ok' : ($s['up_mode'] === 'log' ? 'info' : 'warn'), 'Upload verification',
+        $s['up_mode'] === 'enforce' ? 'On: file types are checked' . ($s['up_inspect'] ? ', doubtful files go to the quarantine' : '') . ($s['up_clamav'] ? ', virus scan with ClamAV' : '') . '.'
+            : ($s['up_mode'] === 'log' ? 'Log only: uploads are checked and logged but not blocked. Check the log, then switch to "enforce".'
+                : 'Off - uploaded files are only checked by ResourceSpace ($banned_extensions).'));
+
     $add($s['notify_enabled'] && ($s['notify_users'] || $s['notify_groups']) ? 'ok' : 'info', 'Incident notifications',
         $s['notify_enabled'] ? sprintf('On: %d user name(s), %d user group(s), incidents: %s.', count($s['notify_users']), count($s['notify_groups']), implode(', ', $s['notify_events']) ?: 'none')
             : 'Off - incidents are only written to the security log. Turn on "Incident notifications" below.');
@@ -405,4 +410,89 @@ function security_guard_settings_changes(array $old, array $new)
         $out[] = is_bool($v) ? $k . '=' . ($v ? 'on' : 'off') : (is_array($v) ? $k : $k . '=' . (is_scalar($v) ? (string) $v : ''));
     }
     return array_slice($out, 0, 25);
+}
+
+// ---- Upload quarantine (options page, since 1.04) ---------------------------------------------
+
+// ['items' => newest first, 'approved' => active approvals by checksum]
+function security_guard_upload_data()
+{
+    require_once __DIR__ . '/upload.php';
+    $file = security_guard_upload_file();
+    $data = is_file($file) && is_readable($file) ? json_decode((string) file_get_contents($file), true) : null;
+    $data = is_array($data) ? $data + array('items' => array(), 'approved' => array()) : array('items' => array(), 'approved' => array());
+    $approved = array();
+    foreach ((array) $data['approved'] as $sha => $a) {
+        if (is_array($a) && (int) $a['until'] >= time()) {
+            $approved[$sha] = $a;
+        }
+    }
+    return array('items' => array_reverse((array) $data['items']), 'approved' => $approved);
+}
+
+// Approves (the user may upload the same file again) or rejects a quarantined file; '' or an error
+function security_guard_upload_decide($id, $approve, array $admin, array $s)
+{
+    require_once __DIR__ . '/upload.php';
+    $dir = security_guard_quarantine_dir();
+    $hours = max(1, min(720, (int) $s['up_grant_hours']));
+    $res = security_guard_upload_update(function (array &$d) use ($id, $approve, $admin, $s, $dir, $hours) {
+        foreach ($d['items'] as $i => $it) {
+            if ((int) $it['id'] !== (int) $id) {
+                continue;
+            }
+            if ($it['status'] !== 'pending') {
+                return 'File #' . (int) $id . ' was already decided.';
+            }
+            if ($approve && $s['up_four_eyes'] && (int) $it['user'] === (int) $admin['ref']) {
+                return 'File #' . (int) $id . ' was uploaded by you - another administrator must approve it ("four eyes").';
+            }
+            $d['items'][$i]['status']  = $approve ? 'approved' : 'rejected';
+            $d['items'][$i]['by']      = $admin['username'];
+            $d['items'][$i]['decided'] = time();
+            if ($approve && $it['sha256'] !== '') {
+                $d['approved'][$it['sha256']] = array('user' => (int) $it['user'], 'username' => $it['username'], 'name' => $it['name'],
+                    'until' => time() + $hours * 3600, 'by' => $admin['username']);
+            }
+            // the file is not kept after the decision (an approved file is uploaded again)
+            if ($it['file'] !== '' && is_file($dir . '/' . $it['file'])) {
+                unlink($dir . '/' . $it['file']);
+            }
+            $d['items'][$i]['file'] = '';
+            return '';
+        }
+        return 'File #' . (int) $id . ' not found.';
+    });
+    if ($res === null) {
+        return 'The quarantine could not be updated (check write access to ' . security_guard_data_dir() . ').';
+    }
+    if ($res === '') {
+        security_guard_log($approve ? 'allow' : 'log', $approve ? 'upload_release' : 'upload_rejected', 'file #' . (int) $id . ' by ' . $admin['username']);
+    }
+    return $res;
+}
+
+// Sends a quarantined file to the administrator (as a download, never displayed); false if missing
+function security_guard_upload_download($id)
+{
+    require_once __DIR__ . '/upload.php';
+    foreach (security_guard_upload_data()['items'] as $it) {
+        if ((int) $it['id'] !== (int) $id || $it['file'] === '') {
+            continue;
+        }
+        $path = security_guard_quarantine_dir() . '/' . $it['file'];
+        if (!is_file($path) || !is_readable($path)) {
+            return false;
+        }
+        $name = preg_replace('/[^A-Za-z0-9._-]+/', '_', (string) $it['name']) . '.quarantine';
+        header('Content-Type: application/octet-stream');
+        header('Content-Disposition: attachment; filename="' . $name . '"');
+        header('X-Content-Type-Options: nosniff');
+        header('Content-Security-Policy: sandbox');
+        header('Content-Length: ' . filesize($path));
+        header('Cache-Control: no-store');
+        readfile($path);
+        return true;
+    }
+    return false;
 }

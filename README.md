@@ -2,9 +2,9 @@
 
 **English** | [Polski](README.pl.md)
 
-Documentation for plugin version **1.03** (ResourceSpace 11).
+Documentation for plugin version **1.04** (ResourceSpace 11).
 *(since X.YY)* marks the plugin version in which a feature first appeared. Features without
-a mark have been available since 1.00. Change history (in Polish): [CHANGELOG.md](CHANGELOG.md).
+a mark have been available since 1.00. Change history: [CHANGELOG.md](CHANGELOG.md).
 
 The plugin protects ResourceSpace against known weaknesses until they are fixed in ResourceSpace
 itself (**virtual patches**) and works as a **light application firewall**: IP allow and block
@@ -12,7 +12,9 @@ lists, scanner blocking, login limits for the API and SimpleSAMLphp, attack patt
 parameters, and a security log that fail2ban can use to ban addresses in the system firewall.
 It also protects against **deleting many resources at once** (approval by another administrator)
 and enforces a **share policy** (password, generated passwords, expiry) *(since 1.01)*, and notifies
-chosen users and user groups about **security incidents** *(since 1.02)*.
+chosen users and user groups about **security incidents** *(since 1.02)*. Uploaded files are checked
+(**allowed file types**, content against the extension, dangerous content) and doubtful files go to a
+**quarantine** that needs an administrator's approval *(since 1.04)*.
 
 **Where:** System > Plugins > Security Guard > **Options**. Only administrators (permission `a`)
 can open this page.
@@ -167,6 +169,71 @@ and collections and for upload shares. Off by default; switch on "Share policy i
 
 Existing shares are not changed; the policy applies when a share is created or edited.
 
+## Upload verification *(since 1.04)*
+
+Checks every uploaded file before ResourceSpace processes it:
+
+- the upload in the interface (`pages/upload_batch.php`: new resources, replaced files, alternative
+  files, uploads through a share) – the complete file is checked in the temporary folder (hook
+  `modify_upload_file`); file types that are not allowed are refused already when the upload starts,
+- files sent as form data (`$_FILES`): API `upload_multipart`, forms of other pages.
+
+Not checked here: files taken from the server or a URL (API `upload_file` with a path,
+`upload_file_by_url`, `create_resource` with a URL) – ResourceSpace limits them with
+`$valid_upload_paths` and `$api_upload_urls` – and the pages in "Not checked (paths)" (default Plugin
+Manager and the Custom CSS import, which upload code on purpose).
+
+**Modes:** *off*, *log only* (default – everything is checked and logged, nothing is blocked) and
+*enforce* (file types that are not allowed are refused, doubtful files go to the quarantine). Start
+with *log only*, look at the `upload_*` lines of the security log, then switch to *enforce*.
+
+**1. Allowed file types** – groups with a starting list:
+
+| Group | Extensions |
+|---|---|
+| Images | jpg, jpeg, jpe, png, gif, tif, tiff, bmp, webp, heic, heif, avif, psd, psb, svg, eps, ai, RAW (cr2, cr3, nef, nrw, arw, dng, orf, raf, rw2, pef, srw) |
+| Video | mp4, m4v, mov, qt, avi, mkv, webm, wmv, mpg, mpeg, mts, m2ts, 3gp, mxf |
+| Documents | pdf, doc, docx, xls, xlsx, ppt, pptx, odt, ods, odp, rtf, txt, csv, indd, idml |
+| Audio (off by default) | mp3, wav, aac, m4a, flac, ogg, aif, aiff |
+
+"Also allow" adds extensions (e.g. `zip`), "Do not allow" removes them from the groups (e.g. `svg`).
+Extensions banned by ResourceSpace (`$banned_extensions`: php, exe, js …) are never allowed. On the
+admin pages only the content is checked, not the file type (administrators import CSV, XML …).
+
+**2. Advanced checks** (option, on by default) – a file is doubtful when:
+
+- its **content does not match the extension** (file signatures, e.g. a program or a ZIP archive
+  named `.jpg`, a PDF named `.png`),
+- it contains **executable content**: Windows / Linux / macOS programs, scripts (`#!/`), **PHP code**
+  (also hidden in images), HTML / JavaScript in binary files,
+- it has **active content**: SVG with scripts, event handlers, `javascript:`, external entities; PDF
+  with `/JavaScript`, `/JS`, `/Launch`, embedded files or rich media; **macros** in Office files
+  (VBA) and OpenDocument files,
+- it is **encrypted** and cannot be checked (password-protected PDF, Office file or ZIP),
+- it contains **sensitive data**: private keys, cloud access keys (text files), or is a key /
+  password file by its name (`id_rsa`, `.env`, `.pem`, `.p12`, `.kdbx` …),
+- its **name** hides a program extension (`photo.php.jpg`) or contains control / right-to-left
+  characters (`invoice[RLO]fdp.exe`),
+- it is the **EICAR test file** (to test the quarantine safely).
+
+Documents are scanned completely up to the set size (default 25 MB), images and videos at the
+beginning and the end. Content in compressed parts of a file (e.g. compressed PDF streams) is not
+unpacked – for that use the **virus scan with ClamAV** (option): the command (default
+`clamdscan --no-summary --fdpass`) runs for every uploaded file; ClamAV must be installed and the
+user that runs PHP must be allowed to use it.
+
+**3. Quarantine and approval:** a doubtful file is moved to
+`<filestore>/security_guard/data_<key>/quarantine/` and the upload is refused with the reasons and a
+request number. The administrators get a notification ("Notify administrators", and the recipients of
+the incident notifications with the type "Uploads"). In the box **Upload quarantine** an
+administrator can download the file for analysis (always as a download, never displayed), approve or
+reject it. **Approve** allows the same file (same SHA-256 checksum) for that user for the set time
+(default 24 hours) – the user uploads it again; the quarantined copy is deleted after the decision.
+With **Four eyes** nobody approves a file they uploaded themselves. Files that wait longer than the
+set time (default 30 days) are deleted automatically.
+
+The checks run only for requests that upload files; normal requests are not affected.
+
 ## Incident notifications *(since 1.02)*
 
 Security incidents are sent to the chosen **users** (user names) and to all active members of the
@@ -184,6 +251,7 @@ Incident types (each can be switched on separately):
 | Login attacks | API login lockout, SimpleSAMLphp login limit |
 | Deletion of many resources | approval requests (also to the administrators when "Notify administrators" is on), blocked permanent deletion, approvals given |
 | Detections without blocking | attack patterns in "log only" mode, corrected login redirect, session hash in the URL |
+| Uploads *(since 1.04)* | file types that are not allowed, quarantined files (also to the administrators when "Notify administrators" is on), approvals |
 | Changes of Security Guard | settings saved (with the changed options), protection switched off, log cleared, plugin reset, test notification |
 
 Against floods: one notification per rule and address in N minutes (default 15) and at most M
@@ -378,6 +446,7 @@ Everything the plugin stores is in `<filestore>/security_guard/`:
 - `data_<key>/events.log`, `events.log.1` – security log,
 - `data_<key>/rate/` – login attempt and notification counters (old ones are removed automatically),
 - `data_<key>/deletion.json` – deletion requests and approvals *(since 1.01)*,
+- `data_<key>/upload.json`, `data_<key>/quarantine/` – quarantined files and approvals *(since 1.04)*,
 - `disabled` – the emergency switch, only when you create it.
 
 `<filestore>` is ResourceSpace's `$storagedir` (default `<RS_ROOT>/filestore`). Updating or removing
@@ -389,7 +458,7 @@ saves something; it only needs write access to the filestore, which ResourceSpac
 The box is collapsed – click its title to open it; it opens by itself after a failed reset.
 
 **Reset plugin** (after typing `RESET`) deletes `<filestore>/security_guard`: settings, log,
-counters, deletion requests and approvals, and the emergency switch file. The default settings apply afterwards. ResourceSpace data
+counters, deletion requests and approvals, the upload quarantine and the emergency switch file. The default settings apply afterwards. ResourceSpace data
 is not changed. This cannot be undone.
 
 ## License

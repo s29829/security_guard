@@ -17,6 +17,15 @@ $errors      = array();
 $settings    = security_guard_settings();
 $client_ip   = security_guard_client_ip($settings);
 
+// Download of a quarantined file (before any output)
+if (isset($_GET['qdownload'])) {
+    if (security_guard_upload_download((int) $_GET['qdownload'])) {
+        security_guard_log('admin', 'upload_download', 'file #' . (int) $_GET['qdownload'] . ' by ' . $username);
+        exit;
+    }
+    $errors[] = 'The quarantined file is no longer available.';
+}
+
 // ---- Handle form actions ----
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action !== '') {
     if (function_exists('enforcePostRequest') && !enforcePostRequest(false)) {
@@ -27,7 +36,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action !== '') {
             'force_random_session', 'saml_hide_errors', 'block_scanners', 'remove_powered_by',
             'del_enabled', 'del_force_trash', 'del_four_eyes', 'del_notify',
             'share_enabled', 'share_require_password', 'share_generate_password', 'share_user_can_change', 'share_allow_never',
-            'notify_enabled', 'notify_screen', 'notify_email') as $k) {
+            'notify_enabled', 'notify_screen', 'notify_email',
+            'up_inspect', 'up_clamav', 'up_four_eyes', 'up_notify_admins') as $k) {
             $new[$k] = !empty($_POST[$k]);
         }
         $new['saml_panel'] = in_array($_POST['saml_panel'] ?? '', array('open', 'allowlist', 'block'), true) ? $_POST['saml_panel'] : 'open';
@@ -49,6 +59,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action !== '') {
         $new['notify_events'] = array_values(array_intersect(array_keys(security_guard_incident_categories()), (array) ($_POST['notify_events'] ?? array())));
         $new['notify_groups'] = array_values(array_unique(array_filter(array_map('intval', (array) ($_POST['notify_groups'] ?? array())))));
         $new['notify_users']  = security_guard_lines($_POST['notify_users'] ?? '');
+        $new['up_mode']        = in_array($_POST['up_mode'] ?? '', array('off', 'log', 'enforce'), true) ? $_POST['up_mode'] : 'log';
+        $new['up_groups']      = array_values(array_intersect(array('images', 'video', 'documents', 'audio'), (array) ($_POST['up_groups'] ?? array())));
+        $new['up_scan_mb']     = max(1, min(500, (int) ($_POST['up_scan_mb'] ?? 25)));
+        $new['up_grant_hours'] = max(1, min(720, (int) ($_POST['up_grant_hours'] ?? 24)));
+        $new['up_keep_days']   = max(1, min(365, (int) ($_POST['up_keep_days'] ?? 30)));
+        $new['up_clamav_cmd']  = trim(preg_replace('/[^A-Za-z0-9 ._\/=-]+/', '', (string) ($_POST['up_clamav_cmd'] ?? '')));
+        $new['up_skip_paths']  = security_guard_lines($_POST['up_skip_paths'] ?? '');
+        foreach (array('up_extra_ext', 'up_block_ext') as $k) {
+            $new[$k] = array_map('strtolower', array_map(function ($e) { return ltrim($e, '.'); }, security_guard_lines($_POST[$k] ?? '')));
+            foreach ($new[$k] as $e) {
+                if (!preg_match('/^[a-z0-9]{1,10}$/', $e)) {
+                    $errors[] = 'Not a file extension: "' . $e . '".';
+                }
+            }
+        }
+        $banned_added = array_intersect($new['up_extra_ext'], array_map('strtolower', (array) ($banned_extensions ?? array())));
+        if ($banned_added) {
+            $errors[] = 'These extensions are banned by ResourceSpace ($banned_extensions) and cannot be allowed: ' . implode(', ', $banned_added) . '.';
+        }
+        if ($new['up_clamav'] && $new['up_clamav_cmd'] === '') {
+            $errors[] = 'Enter the ClamAV command (e.g. clamdscan --no-summary --fdpass).';
+        }
         $unknown = security_guard_unknown_users($new['notify_users']);
         if ($unknown) {
             $errors[] = 'Unknown user name(s) in "Notify users": ' . implode(', ', $unknown) . '.';
@@ -101,6 +133,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action !== '') {
             exit;
         }
         $errors[] = $err;
+    } elseif ($action === 'up_approve' || $action === 'up_reject') {
+        $err = security_guard_upload_decide((int) ($_POST['file_id'] ?? 0), $action === 'up_approve', array('ref' => (int) $userref, 'username' => (string) $username), $settings);
+        if ($err === '') {
+            redirect($self . '?done=' . $action . '#sg-quarantine');
+            exit;
+        }
+        $errors[] = $err;
     } elseif ($action === 'notify_test') {
         $n = security_guard_send_notification($settings, '[Security Guard] ' . ($applicationname ?? 'ResourceSpace') . ': test notification',
             "Security Guard - test notification\n\nSent by " . $username . ' from the options page at ' . date('Y-m-d H:i:s T') . '. No incident happened.',
@@ -148,6 +187,12 @@ switch ((string) ($_GET['done'] ?? '')) {
         break;
     case 'del_revoke':
         $message = 'The approval was withdrawn.';
+        break;
+    case 'up_approve':
+        $message = 'The file was approved. The user can upload it again within ' . (int) $settings['up_grant_hours'] . ' hour(s); the quarantined copy was deleted.';
+        break;
+    case 'up_reject':
+        $message = 'The file was rejected and deleted from the quarantine.';
         break;
     case 'notify_test':
         $message = 'Test notification sent to ' . (int) ($_GET['n'] ?? 0) . ' user(s).';
@@ -386,6 +431,58 @@ include '../../../include/header.php';
                 Save the settings, then use "Send test notification" below.</p>
         </div>
 
+        <div class="sg-box" id="sg-upload">
+            <h3>Upload verification</h3>
+            <p class="sg-help sg-m0">Checks every uploaded file: the upload in the interface (new resources, replaced files, alternative files, uploads through a share),
+                the API (upload_multipart) and forms. Start with "log only", check the security log, then switch to "enforce".
+                Files on the server (API upload_file with a path, upload by URL) are not checked here - they are limited by $valid_upload_paths and $api_upload_urls.</p>
+            <div class="sg-row">
+                <label>Mode
+                    <select name="up_mode">
+                        <?php foreach (array('off' => 'off', 'log' => 'log only (nothing is blocked)', 'enforce' => 'enforce (block file types, quarantine doubtful files)') as $v => $l) { ?>
+                            <option value="<?php echo $h($v); ?>"<?php echo $settings['up_mode'] === $v ? ' selected' : ''; ?>><?php echo $h($l); ?></option>
+                        <?php } ?>
+                    </select></label>
+            </div>
+            <div class="sg-grid">
+                <div><label>Allowed file types</label>
+                    <?php require_once dirname(__FILE__, 2) . '/include/upload.php'; foreach (security_guard_upload_groups() as $gk => $g) { ?>
+                        <label class="sg-check sg-m0"><input type="checkbox" name="up_groups[]" value="<?php echo $h($gk); ?>"<?php echo in_array($gk, $settings['up_groups'], true) ? ' checked' : ''; ?>> <b><?php echo $h($g['label']); ?></b>
+                            <span class="sg-help"><?php echo $h(implode(', ', $g['ext'])); ?></span></label>
+                    <?php } ?>
+                </div>
+                <div><label for="sg-ue">Also allow (extensions)</label>
+                    <textarea id="sg-ue" name="up_extra_ext" spellcheck="false"><?php echo $h($lines($settings['up_extra_ext'])); ?></textarea>
+                    <span class="sg-help">e.g. zip. Extensions banned by ResourceSpace (php, exe, js ...) are never allowed.</span></div>
+                <div><label for="sg-ub">Do not allow (extensions)</label>
+                    <textarea id="sg-ub" name="up_block_ext" spellcheck="false"><?php echo $h($lines($settings['up_block_ext'])); ?></textarea>
+                    <span class="sg-help">Removed from the groups, e.g. svg (SVG images can contain scripts).</span></div>
+                <div><label for="sg-us">Not checked (paths)</label>
+                    <textarea id="sg-us" name="up_skip_paths" spellcheck="false"><?php echo $h($lines($settings['up_skip_paths'])); ?></textarea>
+                    <span class="sg-help">Pages that upload code on purpose (Plugin Manager, Custom CSS import). On the admin pages only the content is checked, not the file type.</span></div>
+            </div>
+            <?php
+            $check('up_inspect', 'Advanced checks', 'The content must match the extension (file signatures) and must not contain programs, scripts, PHP code, macros, active PDF / SVG content, private keys or encrypted content that cannot be checked. Doubtful files go to the quarantine.');
+            ?>
+            <div class="sg-row">
+                <label>Documents are scanned completely up to <input type="number" name="up_scan_mb" min="1" max="500" value="<?php echo (int) $settings['up_scan_mb']; ?>" class="sg-w5"> MB</label>
+                <span class="sg-help sg-m0">(images and videos: the beginning and the end of the file)</span>
+            </div>
+            <div class="sg-row">
+                <label><input type="checkbox" name="up_clamav" value="1"<?php echo $settings['up_clamav'] ? ' checked' : ''; ?>> Virus scan with ClamAV, command</label>
+                <input type="text" name="up_clamav_cmd" value="<?php echo $h($settings['up_clamav_cmd']); ?>" class="sg-wide" spellcheck="false">
+            </div>
+            <p class="sg-help sg-m0">Needs ClamAV on the server (e.g. sudo apt install clamav-daemon). clamdscan with --fdpass works with the clamd service; the user that runs PHP must be allowed to use it.</p>
+            <div class="sg-row">
+                <label>An approved file may be uploaded again within <input type="number" name="up_grant_hours" min="1" max="720" value="<?php echo (int) $settings['up_grant_hours']; ?>" class="sg-w5"> hours;</label>
+                <label>quarantined files are deleted after <input type="number" name="up_keep_days" min="1" max="365" value="<?php echo (int) $settings['up_keep_days']; ?>" class="sg-w5"> days</label>
+            </div>
+            <?php
+            $check('up_four_eyes', 'Four eyes', 'Nobody can approve a file they uploaded themselves.');
+            $check('up_notify_admins', 'Notify administrators', 'Quarantined files appear as ResourceSpace notifications of the system administrators.');
+            ?>
+        </div>
+
         <div class="sg-box">
             <h3>Response headers and log</h3>
             <?php $check('remove_powered_by', 'Remove X-Powered-By', 'Hides the PHP version.'); ?>
@@ -403,6 +500,60 @@ include '../../../include/header.php';
         <button type="submit" name="action" value="notify_test" class="sg-outline">Send test notification</button>
         <span class="sg-help sg-m0">to the saved recipients, with the saved channels (also when notifications are off).</span>
     </form>
+
+    <!-- Upload quarantine -->
+    <?php
+    $uploads   = security_guard_upload_data();
+    $q_pending = array_values(array_filter($uploads['items'], function ($r) { return ($r['status'] ?? '') === 'pending'; }));
+    $q_decided = array_slice(array_values(array_filter($uploads['items'], function ($r) { return ($r['status'] ?? '') !== 'pending'; })), 0, 20);
+    ?>
+    <div class="sg-box" id="sg-quarantine">
+        <h3>Upload quarantine<?php echo $q_pending ? ' <span class="sg-badge sg-off">' . count($q_pending) . '</span>' : ''; ?></h3>
+        <?php if ($q_pending) { ?>
+            <table class="sg-table">
+                <tr><th>#</th><th>Time</th><th>User</th><th>File</th><th>Reasons</th><th>SHA-256</th><th></th></tr>
+                <?php foreach ($q_pending as $r) { ?>
+                    <tr><td><?php echo (int) $r['id']; ?></td><td><?php echo $h(date('Y-m-d H:i', (int) $r['time'])); ?></td>
+                        <td><?php echo $h($r['username'] !== '' ? $r['username'] : '?'); ?><br><span class="sg-help sg-m0"><?php echo $h($r['ip'] . ', ' . $r['context']); ?></span></td>
+                        <td class="sg-wrap"><?php echo $h($r['name']); ?><br><span class="sg-help sg-m0"><?php echo $h(number_format((int) $r['size'] / 1024, 0, '.', ' ') . ' KB'); ?></span></td>
+                        <td class="sg-wrap sg-warn"><?php echo $h(implode('; ', (array) $r['reasons'])); ?></td>
+                        <td><code title="<?php echo $h($r['sha256']); ?>"><?php echo $h(substr((string) $r['sha256'], 0, 12)); ?>…</code></td>
+                        <td><form method="post" action="<?php echo $h($self); ?>" class="sg-row sg-m0">
+                            <?php generateFormToken('security_guard'); ?>
+                            <input type="hidden" name="file_id" value="<?php echo (int) $r['id']; ?>">
+                            <?php if ($r['file'] !== '') { ?><a href="<?php echo $h($self . '?qdownload=' . (int) $r['id']); ?>" title="Download for analysis (do not open it on a workstation without protection)">Download</a><?php } ?>
+                            <button type="submit" name="action" value="up_approve"<?php echo ($settings['up_four_eyes'] && (int) $r['user'] === (int) $userref) ? ' disabled title="Your own upload - another administrator must approve it"' : ''; ?>>Approve</button>
+                            <button type="submit" name="action" value="up_reject" class="sg-outline">Reject</button>
+                        </form></td></tr>
+                <?php } ?>
+            </table>
+            <p class="sg-help sg-m0">Approve = the same file (same SHA-256) may be uploaded by that user within <?php echo (int) $settings['up_grant_hours']; ?> hour(s); the quarantined copy is deleted.</p>
+        <?php } else { ?>
+            <p><i>No files in the quarantine.</i></p>
+        <?php } ?>
+        <?php if ($uploads['approved']) { ?>
+            <p><b>Approved files</b></p>
+            <table class="sg-table">
+                <tr><th>File</th><th>User</th><th>Valid until</th><th>Approved by</th></tr>
+                <?php foreach ($uploads['approved'] as $sha => $a) { ?>
+                    <tr><td><?php echo $h($a['name']); ?> <code title="<?php echo $h($sha); ?>"><?php echo $h(substr((string) $sha, 0, 12)); ?>…</code></td><td><?php echo $h($a['username']); ?></td>
+                        <td><?php echo $h(date('Y-m-d H:i', (int) $a['until'])); ?></td><td><?php echo $h($a['by']); ?></td></tr>
+                <?php } ?>
+            </table>
+        <?php } ?>
+        <?php if ($q_decided) { ?>
+            <details><summary>Decided files (newest 20)</summary>
+                <table class="sg-table">
+                    <tr><th>#</th><th>Time</th><th>User</th><th>File</th><th>Decision</th><th>By</th></tr>
+                    <?php foreach ($q_decided as $r) { ?>
+                        <tr><td><?php echo (int) $r['id']; ?></td><td><?php echo $h(date('Y-m-d H:i', (int) $r['time'])); ?></td><td><?php echo $h($r['username']); ?></td>
+                            <td class="sg-wrap"><?php echo $h($r['name']); ?></td><td><?php echo $h($r['status']); ?></td>
+                            <td><?php echo $h($r['by'] . ((int) $r['decided'] ? ', ' . date('Y-m-d H:i', (int) $r['decided']) : '')); ?></td></tr>
+                    <?php } ?>
+                </table>
+            </details>
+        <?php } ?>
+    </div>
 
     <!-- Deletion approvals -->
     <?php

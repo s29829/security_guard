@@ -122,6 +122,20 @@ function security_guard_defaults()
         'notify_email'         => true,     // e-mail to the address of the user account
         'notify_throttle'      => 15,       // minutes: one notification per rule and address
         'notify_max_per_hour'  => 30,       // all notifications per hour
+        // upload verification (since 1.04)
+        'up_mode'              => 'log',    // off | log (only log and notify) | enforce (block and quarantine)
+        'up_groups'            => array('images', 'video', 'documents'),
+        'up_extra_ext'         => array(),  // additional allowed extensions
+        'up_block_ext'         => array(),  // extensions removed from the groups
+        'up_inspect'           => true,     // advanced checks of the content
+        'up_scan_mb'           => 25,       // documents are scanned completely up to this size
+        'up_clamav'            => false,    // virus scan with ClamAV
+        'up_clamav_cmd'        => 'clamdscan --no-summary --fdpass',
+        'up_four_eyes'         => true,     // nobody approves their own quarantined file
+        'up_grant_hours'       => 24,       // an approved file may be uploaded again within this time
+        'up_keep_days'         => 30,       // quarantined files are deleted after this time
+        'up_notify_admins'     => true,     // notify the administrators about quarantined files
+        'up_skip_paths'        => array('plugins/plugin_manager/pages/', 'plugins/customcss/pages/'),
     );
 }
 
@@ -133,6 +147,7 @@ function security_guard_incident_categories()
         'bruteforce' => 'Login attacks (API login lockout, SimpleSAMLphp login limit)',
         'deletion'   => 'Deletion of many resources (approval requests, blocked permanent deletion, approvals given)',
         'detection'  => 'Detections without blocking (attack patterns in "log only" mode, corrected login redirect, session in the URL)',
+        'upload'     => 'Uploads (file types that are not allowed, quarantined files, approvals)',
         'admin'      => 'Changes of Security Guard (settings, protection switched off, log cleared, reset)',
     );
 }
@@ -142,6 +157,10 @@ function security_guard_incident_category($action, $rule)
 {
     if ($action === 'admin') {
         return 'admin';
+    }
+    if (strpos($rule, 'upload_') === 0) {
+        // quarantined files notify from security_guard_upload_check() (with the administrators)
+        return ($rule === 'upload_quarantine' || $rule === 'upload_rejected') ? '' : 'upload';
     }
     if (strpos($rule, 'delete_') === 0) {
         // approval requests notify from security_guard_deletion_gate() (with the administrators)
@@ -490,6 +509,12 @@ function security_guard_run()
         security_guard_check_deletion_page($s, $path);
     }
 
+    // -- upload verification: only requests that send files (no cost otherwise)
+    if ($s['up_mode'] !== 'off' && ($_FILES || ($path === 'pages/upload_batch.php' && isset($_SERVER['HTTP_UPLOAD_METADATA'])))) {
+        require_once __DIR__ . '/upload.php';
+        security_guard_upload_request($s, $path, $is_api);
+    }
+
     // -- share policy: password and expiry of external shares
     if ($s['share_enabled']) {
         security_guard_share_policy($s, $path);
@@ -759,10 +784,16 @@ function security_guard_deletion_file()
 // Reads and changes the deletion requests / approvals under a lock; $fn(array &$data) returns the result
 function security_guard_deletion_update(callable $fn)
 {
+    return security_guard_json_update(security_guard_deletion_file(), array('next' => 1, 'requests' => array(), 'grants' => array()), $fn);
+}
+
+// Reads and changes a JSON file of the data folder under a lock; null when it cannot be written
+function security_guard_json_update($file, array $defaults, callable $fn)
+{
     if (!security_guard_mkdir(security_guard_data_dir())) {
         return null;
     }
-    $fh = fopen(security_guard_deletion_file(), 'c+');
+    $fh = fopen($file, 'c+');
     if ($fh === false) {
         return null;
     }
@@ -771,7 +802,7 @@ function security_guard_deletion_update(callable $fn)
     if (!is_array($data)) {
         $data = array();
     }
-    $data += array('next' => 1, 'requests' => array(), 'grants' => array());
+    $data += $defaults;
     $result = $fn($data);
     ftruncate($fh, 0);
     rewind($fh);

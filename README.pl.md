@@ -2,9 +2,9 @@
 
 [English](README.md) | **Polski**
 
-Dokumentacja dla wersji wtyczki **1.03** (ResourceSpace 11).
+Dokumentacja dla wersji wtyczki **1.04** (ResourceSpace 11).
 Znacznik *(od X.YY)* oznacza wersję wtyczki, od której funkcja jest dostępna. Funkcje bez
-znacznika są dostępne od wersji 1.00. Historia zmian: [CHANGELOG.md](CHANGELOG.md).
+znacznika są dostępne od wersji 1.00. Historia zmian (po angielsku): [CHANGELOG.md](CHANGELOG.md).
 
 Wtyczka chroni ResourceSpace przed znanymi słabościami, zanim zostaną poprawione w samym
 ResourceSpace (**wirtualne łatki**), i działa jako **lekki firewall aplikacyjny**: listy
@@ -13,7 +13,9 @@ i SimpleSAMLphp, wzorce ataków w parametrach oraz log bezpieczeństwa, z które
 blokować adresy w firewallu systemu. Chroni też przed **usunięciem wielu zasobów naraz**
 (zatwierdzenie przez drugiego administratora) i egzekwuje **politykę udostępniania** (hasło,
 generowane hasła, okres ważności) *(od 1.01)*, a o **incydentach bezpieczeństwa** powiadamia
-wskazanych użytkowników i grupy użytkowników *(od 1.02)*.
+wskazanych użytkowników i grupy użytkowników *(od 1.02)*. Sprawdza przesyłane pliki (**dozwolone
+typy**, zgodność zawartości z rozszerzeniem, niebezpieczna zawartość), a wątpliwe pliki trafiają do
+**kwarantanny**, z której zwalnia je administrator *(od 1.04)*.
 
 **Gdzie:** System > Plugins > Security Guard > **Options**. Stronę otwierają tylko administratorzy
 (uprawnienie `a`).
@@ -167,6 +169,71 @@ włącz „Share policy is on”.
 
 Istniejące udostępnienia się nie zmieniają; polityka działa przy tworzeniu i edycji udostępnienia.
 
+## Weryfikacja przesyłanych plików *(od 1.04)*
+
+Sprawdza każdy przesyłany plik, zanim ResourceSpace go przetworzy:
+
+- upload w interfejsie (`pages/upload_batch.php`: nowe zasoby, zamiana pliku, pliki alternatywne,
+  upload przez udostępnienie) – cały plik jest sprawdzany w katalogu tymczasowym (hook
+  `modify_upload_file`); niedozwolone typy są odrzucane już na początku przesyłania,
+- pliki wysyłane formularzem (`$_FILES`): API `upload_multipart`, formularze innych stron.
+
+Tu nie są sprawdzane: pliki pobierane z serwera lub z adresu URL (API `upload_file` ze ścieżką,
+`upload_file_by_url`, `create_resource` z URL) – ResourceSpace ogranicza je przez `$valid_upload_paths`
+i `$api_upload_urls` – oraz strony z listy „Not checked (paths)” (domyślnie Plugin Manager i import
+Custom CSS, które celowo przyjmują kod).
+
+**Tryby:** *off*, *log only* (domyślnie – wszystko jest sprawdzane i logowane, nic nie jest blokowane)
+i *enforce* (niedozwolone typy są odrzucane, wątpliwe pliki trafiają do kwarantanny). Zacznij od
+*log only*, przejrzyj wiersze `upload_*` w logu bezpieczeństwa, potem przełącz na *enforce*.
+
+**1. Dozwolone typy plików** – grupy z listą startową:
+
+| Grupa | Rozszerzenia |
+|---|---|
+| Obrazy (Images) | jpg, jpeg, jpe, png, gif, tif, tiff, bmp, webp, heic, heif, avif, psd, psb, svg, eps, ai, RAW (cr2, cr3, nef, nrw, arw, dng, orf, raf, rw2, pef, srw) |
+| Wideo (Video) | mp4, m4v, mov, qt, avi, mkv, webm, wmv, mpg, mpeg, mts, m2ts, 3gp, mxf |
+| Dokumenty (Documents) | pdf, doc, docx, xls, xlsx, ppt, pptx, odt, ods, odp, rtf, txt, csv, indd, idml |
+| Audio (domyślnie wyłączone) | mp3, wav, aac, m4a, flac, ogg, aif, aiff |
+
+„Also allow” dodaje rozszerzenia (np. `zip`), „Do not allow” usuwa je z grup (np. `svg`). Rozszerzenia
+zakazane przez ResourceSpace (`$banned_extensions`: php, exe, js …) nigdy nie są dozwolone. Na stronach
+administracyjnych sprawdzana jest tylko zawartość, nie typ (administratorzy importują CSV, XML …).
+
+**2. Weryfikacja zaawansowana** (opcja, domyślnie włączona) – plik jest wątpliwy, gdy:
+
+- jego **zawartość nie pasuje do rozszerzenia** (sygnatury plików, np. program albo archiwum ZIP
+  nazwane `.jpg`, PDF nazwany `.png`),
+- zawiera **kod wykonywalny**: programy Windows / Linux / macOS, skrypty (`#!/`), **kod PHP** (także
+  ukryty w obrazie), HTML / JavaScript w plikach binarnych,
+- ma **aktywną zawartość**: SVG ze skryptami, obsługą zdarzeń, `javascript:`, encjami zewnętrznymi;
+  PDF z `/JavaScript`, `/JS`, `/Launch`, osadzonymi plikami lub multimediami; **makra** w plikach
+  Office (VBA) i OpenDocument,
+- jest **zaszyfrowany** i nie da się go sprawdzić (PDF, plik Office lub ZIP z hasłem),
+- zawiera **dane wrażliwe**: klucze prywatne, klucze dostępu do chmury (pliki tekstowe), albo z nazwy
+  jest plikiem kluczy / haseł (`id_rsa`, `.env`, `.pem`, `.p12`, `.kdbx` …),
+- jego **nazwa** ukrywa rozszerzenie programu (`zdjecie.php.jpg`) albo zawiera znaki sterujące /
+  odwracające kierunek tekstu (`faktura[RLO]fdp.exe`),
+- jest **plikiem testowym EICAR** (do bezpiecznego testu kwarantanny).
+
+Dokumenty są skanowane w całości do ustawionego rozmiaru (domyślnie 25 MB), obrazy i wideo – na
+początku i na końcu. Zawartość skompresowanych części pliku (np. skompresowane strumienie PDF) nie jest
+rozpakowywana – do tego służy **skanowanie antywirusowe ClamAV** (opcja): polecenie (domyślnie
+`clamdscan --no-summary --fdpass`) uruchamiane dla każdego przesłanego pliku; ClamAV musi być
+zainstalowany, a użytkownik uruchamiający PHP musi mieć do niego dostęp.
+
+**3. Kwarantanna i zatwierdzanie:** wątpliwy plik jest przenoszony do
+`<filestore>/security_guard/data_<klucz>/quarantine/`, a upload odrzucany z podaniem powodów i numeru
+wniosku. Administratorzy dostają powiadomienie („Notify administrators” oraz odbiorcy powiadomień
+o incydentach z rodzajem „Uploads”). W ramce **Upload quarantine** administrator może pobrać plik do
+analizy (zawsze jako pobranie, nigdy wyświetlenie), zatwierdzić go albo odrzucić. **Approve** pozwala
+temu użytkownikowi przesłać ten sam plik (ta sama suma SHA-256) w ustawionym czasie (domyślnie 24
+godziny) – użytkownik przesyła go ponownie; kopia z kwarantanny jest usuwana po decyzji. Przy **Four
+eyes** nikt nie zatwierdzi pliku, który sam przesłał. Pliki czekające dłużej niż ustawiony czas
+(domyślnie 30 dni) są usuwane automatycznie.
+
+Kontrole działają tylko dla żądań przesyłających pliki; zwykłe żądania się nie zmieniają.
+
 ## Powiadomienia o incydentach *(od 1.02)*
 
 Incydenty bezpieczeństwa trafiają do wskazanych **użytkowników** (nazwy użytkowników) i do wszystkich
@@ -184,6 +251,7 @@ Rodzaje incydentów (każdy włączany osobno):
 | Ataki na logowanie | blokada logowania przez API, limit logowania SimpleSAMLphp |
 | Usuwanie wielu zasobów | wnioski o zatwierdzenie (także do administratorów, gdy włączone „Notify administrators”), zablokowane trwałe usuwanie, udzielone zgody |
 | Wykrycia bez blokady | wzorce ataków w trybie „log only”, poprawione przekierowanie po logowaniu, hash sesji w adresie |
+| Uploady *(od 1.04)* | niedozwolone typy plików, pliki w kwarantannie (także do administratorów, gdy włączone „Notify administrators”), zatwierdzenia |
 | Zmiany Security Guard | zapis ustawień (ze zmienionymi opcjami), wyłączenie ochrony, usunięcie logu, reset wtyczki, powiadomienie testowe |
 
 Przeciw zalewowi: jedno powiadomienie na regułę i adres w ciągu N minut (domyślnie 15) i najwyżej
@@ -379,6 +447,7 @@ Wszystko, co zapisuje wtyczka, jest w `<filestore>/security_guard/`:
 - `data_<klucz>/events.log`, `events.log.1` – log bezpieczeństwa,
 - `data_<klucz>/rate/` – liczniki prób logowania i powiadomień (stare są usuwane automatycznie),
 - `data_<klucz>/deletion.json` – wnioski o zatwierdzenie usunięcia i zgody *(od 1.01)*,
+- `data_<klucz>/upload.json`, `data_<klucz>/quarantine/` – pliki w kwarantannie i zatwierdzenia *(od 1.04)*,
 - `disabled` – wyłącznik awaryjny, tylko gdy go utworzysz.
 
 `<filestore>` to `$storagedir` ResourceSpace (domyślnie `<RS_ROOT>/filestore`). Aktualizacja ani
@@ -390,7 +459,7 @@ pierwszym zapisie; potrzebuje tylko prawa zapisu do filestore, które ResourceSp
 Ramka jest zwinięta – kliknij tytuł, aby ją rozwinąć; otwiera się sama po nieudanym resecie.
 
 **Reset plugin** (po wpisaniu `RESET`) usuwa `<filestore>/security_guard`: ustawienia, log, liczniki,
-wnioski i zgody na usunięcie oraz plik wyłącznika awaryjnego. Potem obowiązują ustawienia domyślne. Dane ResourceSpace się nie
+wnioski i zgody na usunięcie, kwarantannę uploadów oraz plik wyłącznika awaryjnego. Potem obowiązują ustawienia domyślne. Dane ResourceSpace się nie
 zmieniają. Operacji nie można cofnąć.
 
 ## Licencja

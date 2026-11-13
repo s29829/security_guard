@@ -1,17 +1,18 @@
 # Changelog - Security Guard
 
-Numeracja wtyczki: 1.00, 1.01, 1.02 … (+0.01 przy każdej zmianie, `tools/release.py bump`).
-Wersja wtyczki w `security_guard.yaml`; wersja całego repozytorium w pliku `VERSION` (zob. `CHANGELOG.md` w katalogu głównym).
+Plugin version numbers: 1.00, 1.01, 1.02 … (+0.01 for every change). The current version is in `security_guard.yaml`.
+
+## [1.04] - 2026-11-13
+- Upload verification: allowed file types (groups images, video, documents, audio + own extensions, exclusions), advanced checks (content against the extension, programs, scripts, PHP code, active SVG/PDF content, Office/OpenDocument macros, encrypted files, private keys and sensitive files, suspicious names, EICAR), optional ClamAV scan; quarantine of doubtful files with approval by an administrator (four eyes, approval by SHA-256 for a set time, download for analysis, automatic deletion), modes off/log/enforce, notifications (type Uploads).
 
 ## [1.03] - 2026-11-13
-- Dokumentacja: instalacja na Apache (Ubuntu/Debian i rodzina RHEL) – użytkownik i grupa uruchamiające PHP (mod_php / PHP-FPM), uprawnienia, wyłączenie listowania katalogów (Options -Indexes), SELinux; odpowiedniki reguł nginx dla Apache (ServerTokens, SimpleSAMLphp, ukryte pliki, mod_remoteip, limity).
+- Documentation: installation on Apache (Ubuntu/Debian and the RHEL family) – user and group that run PHP (mod_php / PHP-FPM), permissions, no directory listings (Options -Indexes), SELinux; Apache equivalents of the nginx rules (ServerTokens, SimpleSAMLphp, hidden files, mod_remoteip, limits).
 
 ## [1.02] - 2026-11-13
-- Powiadomienia o incydentach bezpieczeństwa do wskazanych użytkowników i grup użytkowników: powiadomienie ResourceSpace i/lub e-mail, wybór rodzajów incydentów (zablokowane ataki, ataki na logowanie, usuwanie wielu zasobów, wykrycia bez blokady, zmiany Security Guard), ograniczenie częstotliwości (na regułę i adres oraz na godzinę), powiadomienie testowe, zmiany ustawień w logu; pozycja w kontroli konfiguracji.
+- Security incident notifications to chosen users and user groups: ResourceSpace notification and/or e-mail, choice of incident types (blocked attacks, login attacks, deletion of many resources, detections without blocking, changes of Security Guard), throttling (per rule and address and per hour), test notification, changed settings in the log; entry in the configuration check.
 
 ## [1.01] - 2026-11-13
-- Ochrona przed usuwaniem: wymuszony kosz ($resource_deletion_state), limity usuwania na użytkownika i okres (z resource_log) dla API, usuwania kolekcji z zasobami i edycji zbiorczej do stanu Deleted, trwałe usuwanie w przeglądarce w ramach limitu albo zablokowane, powyżej limitu zatwierdzenie przez innego administratora (cztery oczy, powiadomienia, zatwierdzanie z góry, wycofywanie zgód); polityka udostępniania: wymagane hasło, proponowane losowe hasło o minimalnej długości, domyślny i maksymalny okres ważności egzekwowany na serwerze, opcjonalnie bez zmiany daty i bez „Never”.
+- Deletion protection: enforced trash ($resource_deletion_state), deletion limits per user and time window (from resource_log) for the API, deleting collections with their resources and batch edit to the Deleted state, permanent deletion in the browser within the limit or blocked, above the limit approval by another administrator (four eyes, notifications, approval in advance, withdrawing approvals); share policy: password required, proposed random password with a minimum length, default and maximum expiry enforced on the server, optionally without changing the date and without "Never".
 
 ## [1.00] - 2026-11-13
-- Pierwsza wersja: wirtualne łatki (daty raportów tylko liczbowe, przekierowanie po logowaniu tylko w serwisie, jedno źródło nazwy funkcji w API, blokada logowania przez API, sesja tylko z ciasteczka, opcjonalnie jedna sesja na konto), SimpleSAMLphp (ukrycie szczegółów błędów, lokalny panel logowania: open/allowlist/block, limit prób), lekki firewall (zaufane proxy, blokowane adresy, strony admina i klucze API tylko z listy IP, blokowanie skanerów, wzorce ataków: log/block), nagłówki (bez X-Powered-By, Permissions-Policy), log bezpieczeństwa dla fail2ban, kontrola konfiguracji, szablony nginx/fail2ban, wyłączniki awaryjne, Reset plugin.
-
+- First version: virtual patches (report dates only as numbers, redirect after login only to this site, one source of the function name in the API, API login lockout, session only from the cookie, optionally one session per account), SimpleSAMLphp (hide error details, local login panel: open/allowlist/block, attempt limit), light firewall (trusted proxies, blocked addresses, admin pages and API keys only from listed IPs, scanner blocking, attack patterns: log/block), headers (no X-Powered-By, Permissions-Policy), security log for fail2ban, configuration check, nginx/fail2ban templates, emergency switches, Reset plugin.
