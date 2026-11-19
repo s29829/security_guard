@@ -3,14 +3,19 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Security Guard – ResourceSpace plugin</title>
+<title>Security Guard – free ResourceSpace 11 plugin</title>
 <meta name="description" content="Virtual patches for known ResourceSpace weaknesses and a light application firewall.">
-<meta property="og:title" content="Security Guard – ResourceSpace plugin">
+<link rel="canonical" href="https://s29829.github.io/security_guard/">
+<meta name="robots" content="index, follow">
+<meta property="og:title" content="Security Guard – free ResourceSpace 11 plugin">
 <meta property="og:description" content="Virtual patches for known ResourceSpace weaknesses and a light application firewall.">
 <meta property="og:type" content="website">
+<meta property="og:url" content="https://s29829.github.io/security_guard/">
+<meta property="og:site_name" content="ResourceSpace plugins">
+<script type="application/ld+json">{"@context": "https://schema.org", "@type": "SoftwareApplication", "name": "Security Guard", "alternateName": "Security Guard plugin for ResourceSpace", "description": "Security Guard protects ResourceSpace against known weaknesses until they are fixed in ResourceSpace itself, and works as a light application firewall. It runs on every request – pages, API and SimpleSAMLphp – before the page code, and costs almost nothing: a normal request needs no database query and writes nothing to disk.", "url": "https://s29829.github.io/security_guard/", "applicationCategory": "BusinessApplication", "applicationSubCategory": "ResourceSpace plugin", "operatingSystem": "Linux, Windows (ResourceSpace 11, PHP 8)", "featureList": ["Virtual patches", "Application firewall", "SimpleSAMLphp", "Deletion protection", "Share policy", "Upload verification", "Local login page", "Log, notifications, fail2ban", "Easy to control"], "downloadUrl": "https://github.com/s29829/security_guard/releases/download/v1.08/security_guard-1.08.zip", "softwareRequirements": "ResourceSpace 11, No extra PHP extensions, Works with nginx and Apache (templates for both)", "isAccessibleForFree": true, "license": "https://polyformproject.org/licenses/noncommercial/1.0.0/", "codeRepository": "https://github.com/s29829/security_guard", "author": {"@type": "Person", "name": "Jacek Kowalczyk"}, "offers": {"@type": "Offer", "price": "0", "priceCurrency": "EUR"}, "softwareVersion": "1.08", "datePublished": "2026-11-19"}</script>
 <meta name="color-scheme" content="light dark">
 <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
-<link rel="stylesheet" href="assets/style.css?v=202611191201">
+<link rel="stylesheet" href="assets/style.css?v=202611191959">
 </head>
 <body style="--accent: #dc2626">
 <a class="skip" href="#main">Skip to content</a>
@@ -23,6 +28,7 @@
       <a class="tab" href="../permission_group_manager/" style="--tab-accent: #0d9488" title="Permission Group Manager"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6"/><circle cx="17" cy="9" r="2.5"/><path d="M16.5 14.2c2.9.2 5 2.4 5 5.8"/></svg><span>Permissions</span></a>
       <a class="tab" href="../collection_access_manager/" style="--tab-accent: #d97706" title="Collection Access Manager"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5h4.6l2 2.5h8.4A1.5 1.5 0 0 1 21 9v9.5a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5z"/><path d="M8.5 13.5l2.5 2.5 4.5-4.5"/></svg><span>Collection Access</span></a>
       <a class="tab" href="../security_guard/" style="--tab-accent: #dc2626" title="Security Guard" aria-current="page"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l7.5 3v5.5c0 4.6-3.2 8.3-7.5 9.5-4.3-1.2-7.5-4.9-7.5-9.5V6z"/><path d="M8.5 12l2.5 2.5 4.5-5"/></svg><span>Security Guard</span></a>
+      <a class="tab" href="../system_monitor/" style="--tab-accent: #0d9488" title="System Monitor"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4v16h16"/><path d="M7 15l4-5 3 3 5-6"/></svg><span>System Monitor</span></a>
     </nav>
   </div>
 </header>
@@ -120,6 +126,6 @@ sudo chown -R www-data:www-data &lt;RS_ROOT&gt;/plugins/security_guard</code></p
     <p class="muted">Site generated 2026-11-19. Download buttons always point to the latest release on GitHub.</p>
   </div>
 </footer>
-<script src="assets/site.js?v=202611191201" defer></script>
+<script src="assets/site.js?v=202611191959" defer></script>
 </body>
 </html>
