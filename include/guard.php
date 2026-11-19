@@ -136,6 +136,14 @@ function security_guard_defaults()
         'up_keep_days'         => 30,       // quarantined files are deleted after this time
         'up_notify_admins'     => true,     // notify the administrators about quarantined files
         'up_skip_paths'        => array('plugins/plugin_manager/pages/', 'plugins/customcss/pages/'),
+        // login page for local accounts (since 1.05)
+        'll_enabled'           => false,
+        'll_key'               => '',       // secret of the page link (generated on the options page)
+        'll_path'              => '',       // own address, e.g. local-login (needs a rule in nginx / Apache)
+        'll_path_key'          => false,    // the own address also needs the key (?sgk=...)
+        'll_ips'               => array(),  // the page only from these addresses (empty = any)
+        'll_enforce'           => false,    // password logins only through this page (login.php refuses them)
+        'll_enforce_api'       => true,     // with enforcing: also refuse the API login (function=login)
     );
 }
 
@@ -144,7 +152,7 @@ function security_guard_incident_categories()
 {
     return array(
         'attack'     => 'Blocked attacks (firewall, patches, attack patterns in "block" mode)',
-        'bruteforce' => 'Login attacks (API login lockout, SimpleSAMLphp login limit)',
+        'bruteforce' => 'Login attacks (API login lockout, SimpleSAMLphp login limit, password logins outside the local login page)',
         'deletion'   => 'Deletion of many resources (approval requests, blocked permanent deletion, approvals given)',
         'detection'  => 'Detections without blocking (attack patterns in "log only" mode, corrected login redirect, session in the URL)',
         'upload'     => 'Uploads (file types that are not allowed, quarantined files, approvals)',
@@ -167,7 +175,7 @@ function security_guard_incident_category($action, $rule)
         return ($rule === 'delete_approval' || $rule === 'delete_grant_revoked' || $rule === 'delete_request_rejected') ? '' : 'deletion';
     }
     if ($action === 'block') {
-        if ($rule === 'api_lockout' || $rule === 'saml_bruteforce') {
+        if ($rule === 'api_lockout' || $rule === 'saml_bruteforce' || strpos($rule, 'local_login') === 0) {
             return 'bruteforce';
         }
         return $rule === 'share_password' ? '' : 'attack';
@@ -461,7 +469,9 @@ function security_guard_run()
             }
         }
     }
-    if ($s['admin_ips'] && security_guard_path_match($path, $s['admin_paths']) && !security_guard_ip_in($ip, $s['admin_ips'])) {
+    // (the local login page has its own address list)
+    $ll_page = $s['ll_enabled'] && security_guard_ll_is_page();
+    if ($s['admin_ips'] && !$ll_page && security_guard_path_match($path, $s['admin_paths']) && !security_guard_ip_in($ip, $s['admin_ips'])) {
         security_guard_deny(403, 'admin_allowlist');
     }
 
@@ -502,6 +512,12 @@ function security_guard_run()
             $_POST['url'] = 'index.php';
             $_REQUEST['url'] = 'index.php';
         }
+    }
+
+    // -- local accounts: password logins only through the local login page (since 1.05)
+    if ($s['ll_enabled'] && $path === 'login.php' && $method === 'POST' && array_key_exists('username', $_POST)
+        && (string) ($_POST['langupdate'] ?? '') === '') {
+        security_guard_ll_login_post($s, $ip);
     }
 
     // -- deletion protection: deleting collections of resources in the browser
@@ -582,6 +598,12 @@ function security_guard_check_api(array $s, $ip)
     // API keys only from allowed addresses (the browser interface uses authmode=native and stays open)
     if ($s['api_ips'] && $authmode !== 'native' && !security_guard_ip_in($ip, $s['api_ips'])) {
         security_guard_deny(403, 'api_allowlist', '', true);
+    }
+
+    // password login through the API refused when local accounts log in only on the local login page
+    if ($qfunc === 'login' && $s['ll_enabled'] && $s['ll_enforce'] && $s['ll_enforce_api']) {
+        $user = is_string($params['param1'] ?? null) ? $params['param1'] : (is_string($params['username'] ?? null) ? $params['username'] : '');
+        security_guard_deny(403, 'local_login_api', $user !== '' ? 'username: ' . $user : '', true, 'Password login through the API is switched off.');
     }
 
     // login through the API: same lockouts as login.php
@@ -1187,4 +1209,158 @@ function security_guard_incident($category, $action, $rule, $detail, $ref)
     } finally {
         $busy = false;
     }
+}
+
+// ---- Login page for local accounts (since 1.05) ---------------------------------------------------
+//
+// pages/local_login.php shows the login form of ResourceSpace for local accounts (user name and
+// password) when the standard login page shows only single sign-on. The form posts to login.php, so
+// ResourceSpace itself checks the password, the lockouts and the session. The page opens with its
+// secret link (?sgk=<key>) or at an own address (a rule in nginx / Apache). With "enforcing" login.php
+// accepts a password only from this form (a signed field), and the API login can be refused.
+
+// Is this request the local login page (by the file that runs, so also through the own address)?
+function security_guard_ll_is_page()
+{
+    $file = (string) ($_SERVER['SCRIPT_FILENAME'] ?? '');
+    if ($file === '' || basename($file) !== 'local_login.php') {
+        return false;
+    }
+    $page = realpath(dirname(__DIR__) . '/pages/local_login.php');
+    return $page !== false && realpath($file) === $page;
+}
+
+// May the page be shown? '' = yes, otherwise the reason (off | ip | key)
+function security_guard_ll_access(array $s)
+{
+    if (!$s['enabled'] || !$s['ll_enabled'] || strlen($s['ll_key']) < 16) {
+        return 'off';
+    }
+    if ($s['ll_ips'] && !security_guard_ip_in(security_guard_client_ip($s), $s['ll_ips'])) {
+        return 'ip';
+    }
+    $k = $_GET['sgk'] ?? ''; // not "k": ResourceSpace uses k for share keys
+    $key_ok = is_string($k) && $k !== '' && hash_equals($s['ll_key'], $k);
+    $own = trim($s['ll_path'], '/');
+    if ($own !== '' && security_guard_path() === $own) {
+        return ($s['ll_path_key'] && !$key_ok) ? 'key' : '';
+    }
+    return $key_ok ? '' : 'key';
+}
+
+// Address of the page: the own address when set, otherwise the plugin page with the key
+function security_guard_ll_url(array $s, array $extra = array(), $prefer_own = true)
+{
+    $base = rtrim((string) ($GLOBALS['baseurl'] ?? ''), '/');
+    $own  = trim($s['ll_path'], '/');
+    $query = array();
+    if ($prefer_own && $own !== '') {
+        $url = $base . '/' . $own;
+        if ($s['ll_path_key']) {
+            $query['sgk'] = $s['ll_key'];
+        }
+    } else {
+        $plugin = function_exists('get_plugin_path') ? get_plugin_path('security_guard', true) : false;
+        $origin = preg_replace('#^([a-z][a-z0-9+.\-]*://[^/]+).*$#i', '$1', $base);
+        if (!$plugin) {
+            $plugin = $base . '/plugins/security_guard';
+        } elseif (strpos($plugin, '://') === false) {
+            $plugin = $origin . '/' . ltrim($plugin, '/');
+        }
+        $url = rtrim($plugin, '/') . '/pages/local_login.php';
+        $query['sgk'] = $s['ll_key'];
+    }
+    $query += $extra;
+    return $url . ($query ? '?' . http_build_query($query) : '');
+}
+
+function security_guard_ll_secret(array $s)
+{
+    return hash('sha256', (string) ($GLOBALS['scramble_key'] ?? '') . '|security_guard_ll|' . $s['ll_key']);
+}
+
+// Signed field of the form ("<time>.<hmac>"), valid for 2 hours
+function security_guard_ll_token(array $s)
+{
+    $t = (string) time();
+    return $t . '.' . hash_hmac('sha256', 'login|' . $t, security_guard_ll_secret($s));
+}
+
+function security_guard_ll_token_valid(array $s, $value)
+{
+    if (strlen($s['ll_key']) < 16 || !is_string($value) || !preg_match('/^(\d{9,11})\.([0-9a-f]{64})$/', $value, $m)) {
+        return false;
+    }
+    $age = time() - (int) $m[1];
+    return $age >= -60 && $age <= 7200 && hash_equals(hash_hmac('sha256', 'login|' . $m[1], security_guard_ll_secret($s)), $m[2]);
+}
+
+// Error message of a failed login, signed for the way back to the page
+function security_guard_ll_sign_message(array $s, $text)
+{
+    $text = trim(html_entity_decode(strip_tags((string) $text), ENT_QUOTES, 'UTF-8'));
+    $text = function_exists('mb_substr') ? mb_substr($text, 0, 300) : substr($text, 0, 300);
+    $e = rtrim(strtr(base64_encode($text), '+/', '-_'), '=');
+    return array('e' => $e, 's' => substr(hash_hmac('sha256', 'msg|' . $e, security_guard_ll_secret($s)), 0, 32));
+}
+
+function security_guard_ll_read_message(array $s)
+{
+    $e = $_GET['e'] ?? '';
+    $sig = $_GET['s'] ?? '';
+    if (!is_string($e) || !is_string($sig) || $e === '' || strlen($e) > 600
+        || !hash_equals(substr(hash_hmac('sha256', 'msg|' . $e, security_guard_ll_secret($s)), 0, 32), $sig)) {
+        return '';
+    }
+    $text = base64_decode(strtr($e, '-_', '+/'), true);
+    return is_string($text) ? $text : '';
+}
+
+// SimpleSAMLphp with $simplesaml_site_block sends every page without a session to SSO - not this one
+function security_guard_ll_allow_standard()
+{
+    if (!empty($GLOBALS['simplesaml_site_block'])) {
+        $GLOBALS['simplesaml_site_block'] = false;
+    }
+}
+
+// A login post to login.php: from the local login page (signed field) or refused when enforcing
+function security_guard_ll_login_post(array $s, $ip)
+{
+    $from_page = security_guard_ll_token_valid($s, $_POST['sg_ll'] ?? '') && (!$s['ll_ips'] || security_guard_ip_in($ip, $s['ll_ips']));
+    if ($from_page) {
+        $GLOBALS['security_guard_ll_post'] = true;
+        security_guard_ll_allow_standard();
+        return;
+    }
+    if (!$s['ll_enforce']) {
+        return;
+    }
+    $user = is_string($_POST['username']) ? $_POST['username'] : '';
+    security_guard_log('block', 'local_login_only', $user !== '' ? 'username: ' . $user : '');
+    unset($_POST['username'], $_POST['password'], $_REQUEST['username'], $_REQUEST['password']);
+    if (!headers_sent()) {
+        header('Cache-Control: no-store');
+        header('Location: ' . rtrim((string) ($GLOBALS['baseurl'] ?? ''), '/') . '/login.php?sg_local=1', true, 303);
+        exit;
+    }
+}
+
+// Script for login.php: back to the local login page after a failed login, or the explanation
+// when a password login was refused
+function security_guard_ll_login_script(array $s)
+{
+    if (!empty($GLOBALS['security_guard_ll_post'])) {
+        $error = $GLOBALS['error'] ?? '';
+        $error = is_string($error) && trim(strip_tags($error)) !== '' ? $error : 'The user name or the password is not correct.';
+        $url = security_guard_ll_url($s, security_guard_ll_sign_message($s, $error));
+        return 'location.replace(' . json_encode($url) . ');';
+    }
+    if (isset($_GET['sg_local']) && $s['ll_enforce']) {
+        $text = 'Local accounts log in on their own login page. Please use single sign-on.';
+        return 'document.addEventListener("DOMContentLoaded",function(){var f=document.getElementById("loginform");if(!f){return;}'
+            . 'var d=document.createElement("div");d.className="FormIncorrect";d.id="LoginError";d.textContent=' . json_encode($text) . ';'
+            . 'var h=f.querySelector("h1");if(h&&h.nextSibling){f.insertBefore(d,h.nextSibling);}else{f.insertBefore(d,f.firstChild);}});';
+    }
+    return '';
 }

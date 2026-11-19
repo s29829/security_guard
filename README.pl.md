@@ -2,7 +2,7 @@
 
 [English](README.md) | **Polski**
 
-Dokumentacja dla wersji wtyczki **1.04** (ResourceSpace 11).
+Dokumentacja dla wersji wtyczki **1.05** (ResourceSpace 11).
 Znacznik *(od X.YY)* oznacza wersję wtyczki, od której funkcja jest dostępna. Funkcje bez
 znacznika są dostępne od wersji 1.00. Historia zmian (po angielsku): [CHANGELOG.md](CHANGELOG.md).
 
@@ -15,7 +15,8 @@ blokować adresy w firewallu systemu. Chroni też przed **usunięciem wielu zaso
 generowane hasła, okres ważności) *(od 1.01)*, a o **incydentach bezpieczeństwa** powiadamia
 wskazanych użytkowników i grupy użytkowników *(od 1.02)*. Sprawdza przesyłane pliki (**dozwolone
 typy**, zgodność zawartości z rozszerzeniem, niebezpieczna zawartość), a wątpliwe pliki trafiają do
-**kwarantanny**, z której zwalnia je administrator *(od 1.04)*.
+**kwarantanny**, z której zwalnia je administrator *(od 1.04)*. **Strona logowania dla kont lokalnych**
+pod własnym adresem może być jedynym miejscem logowania kont lokalnych *(od 1.05)*.
 
 **Gdzie:** System > Plugins > Security Guard > **Options**. Stronę otwierają tylko administratorzy
 (uprawnienie `a`).
@@ -234,6 +235,44 @@ eyes** nikt nie zatwierdzi pliku, który sam przesłał. Pliki czekające dłuż
 
 Kontrole działają tylko dla żądań przesyłających pliki; zwykłe żądania się nie zmieniają.
 
+## Strona logowania dla kont lokalnych *(od 1.05)*
+
+Osobna strona logowania z nazwą użytkownika i hasłem dla **kont lokalnych** (kont bez single
+sign-on), np. gdy standardowa strona logowania pokazuje tylko przycisk SSO (Custom CSS: „Hide the
+local login fields”). Sekcja **Login page for local accounts** na stronie opcji.
+
+- **Jak działa:** strona pokazuje formularz logowania ResourceSpace w układzie strony logowania
+  (logo, tło, motyw). Formularz wysyła dane do standardowego `login.php`, więc hasło, blokady
+  logowania, „Keep me logged in”, regulamin i sesję sprawdza sam ResourceSpace. Po nieudanym
+  logowaniu użytkownik wraca na tę stronę z komunikatem ResourceSpace.
+- **Adres – dwa sposoby:**
+  - **Link z kluczem** (bez zmian w serwerze WWW):
+    `<adres bazowy>/plugins/security_guard/pages/local_login.php?sgk=<klucz>`. 32-znakowy klucz
+    powstaje przy zapisie; **New key for the local login page** unieważnia stary link.
+  - **Własny adres**, np. `<adres bazowy>/local-login`: pole *Own address*. Wtyczka nie może dodać
+    adresu do serwera WWW, więc dodaj regułę z sekcji *Server configuration* (nginx `location`
+    z `rewrite` albo Apache `RewriteRule`). Link z kluczem dalej działa, więc brak reguły nie
+    odetnie dostępu. *The own address also needs the key* dodaje wymóg `?sgk=<klucz>`.
+  - Bez klucza i poza własnym adresem strona odpowiada **404 Not found** (w logu
+    `local_login_denied`).
+- **Local login page only from:** adresy lub sieci, z których można otworzyć stronę (puste = dowolne).
+- **Wymuszenie (Enforce, opcjonalnie):** `login.php` odrzuca nazwę i hasło, które nie pochodzą z tej
+  strony (podpisane pole formularza, ważne 2 godziny). Użytkownik widzi „Local accounts log in on
+  their own login page. Please use single sign-on.”, a log – `local_login_only` (typ powiadomień
+  *Ataki na logowanie*). Single sign-on działa bez zmian.
+  - *With enforcing: also refuse the password login of the API* (`function=login`, domyślnie
+    włączone). Wywołania API podpisane kluczem API działają bez zmian.
+  - Bez zmian: logowanie po stronie SimpleSAMLphp, e-maile resetu hasła.
+  - Zachowaj link. Bez niego konta lokalne (także administratorzy bez SSO) nie zalogują się.
+    Awaryjnie wyłącz Security Guard na serwerze (zob. „Wyłączenie z poziomu serwera”) – wtedy
+    `login.php` znowu przyjmuje hasła.
+- **SimpleSAMLphp:** przy `$simplesaml_site_block` strona i wysłanie formularza są przepuszczane
+  (wtyczka wyłącza blokadę tylko dla tych dwóch żądań). `$simplesaml_allow_standard_login` musi być
+  `true`, inaczej SimpleSAMLphp odsyła konta lokalne do SSO (ostrzega o tym kontrola konfiguracji).
+- **Do sprawdzenia w ResourceSpace 11:** formularz używa pól formularza logowania ResourceSpace 10.7
+  (`username`, `password`, `remember`, `url`, `user_local_timezone`). Jeśli logowanie nie działa,
+  sprawdź formularz logowania ResourceSpace 11 w przeglądarce (F12).
+
 ## Powiadomienia o incydentach *(od 1.02)*
 
 Incydenty bezpieczeństwa trafiają do wskazanych **użytkowników** (nazwy użytkowników) i do wszystkich
@@ -248,7 +287,7 @@ Rodzaje incydentów (każdy włączany osobno):
 | Rodzaj | Zdarzenia |
 |---|---|
 | Zablokowane ataki | blokowane adresy, skanery, strony admina / klucze API z innych adresów, pomylenie „function” w API, parametry raportów, wzorce ataków w trybie „block”, panel SimpleSAMLphp |
-| Ataki na logowanie | blokada logowania przez API, limit logowania SimpleSAMLphp |
+| Ataki na logowanie | blokada logowania przez API, limit logowania SimpleSAMLphp, logowanie hasłem poza stroną dla kont lokalnych *(od 1.05)* |
 | Usuwanie wielu zasobów | wnioski o zatwierdzenie (także do administratorów, gdy włączone „Notify administrators”), zablokowane trwałe usuwanie, udzielone zgody |
 | Wykrycia bez blokady | wzorce ataków w trybie „log only”, poprawione przekierowanie po logowaniu, hash sesji w adresie |
 | Uploady *(od 1.04)* | niedozwolone typy plików, pliki w kwarantannie (także do administratorów, gdy włączone „Notify administrators”), zatwierdzenia |

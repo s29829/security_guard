@@ -223,6 +223,14 @@ function security_guard_checklist(array $s)
         $s['notify_enabled'] ? sprintf('On: %d user name(s), %d user group(s), incidents: %s.', count($s['notify_users']), count($s['notify_groups']), implode(', ', $s['notify_events']) ?: 'none')
             : 'Off - incidents are only written to the security log. Turn on "Incident notifications" below.');
 
+    if ($s['ll_enabled']) {
+        $saml_std = !array_key_exists('simplesaml_allow_standard_login', $g) || !empty($g['simplesaml_allow_standard_login']);
+        $add($saml_std ? ($s['ll_enforce'] ? 'ok' : 'info') : 'warn', 'Login page for local accounts',
+            !$saml_std ? '$simplesaml_allow_standard_login is false: SimpleSAMLphp sends users without an SSO session to SSO, so local accounts cannot use ResourceSpace. Set it to true in config.php.'
+                : ($s['ll_enforce'] ? 'On and enforced: login.php accepts passwords only from the local login page.'
+                    : 'On, not enforced: local accounts can still log in on the standard login page (the fields are only hidden, e.g. by Custom CSS).'));
+    }
+
     $add(is_file(security_guard_kill_file()) || !empty($g['security_guard_disable']) ? 'warn' : 'ok', 'Emergency switch',
         is_file(security_guard_kill_file()) ? 'The file ' . security_guard_kill_file() . ' exists - all checks are OFF.'
             : (!empty($g['security_guard_disable']) ? '$security_guard_disable is set in config.php - all checks are OFF.' : 'Not used.'));
@@ -407,6 +415,10 @@ function security_guard_settings_changes(array $old, array $new)
         if (!array_key_exists($k, $old) || $old[$k] === $v) {
             continue;
         }
+        if ($k === 'll_key') {
+            $out[] = 'll_key (new key)'; // never the key itself
+            continue;
+        }
         $out[] = is_bool($v) ? $k . '=' . ($v ? 'on' : 'off') : (is_array($v) ? $k : $k . '=' . (is_scalar($v) ? (string) $v : ''));
     }
     return array_slice($out, 0, 25);
@@ -495,4 +507,50 @@ function security_guard_upload_download($id)
         return true;
     }
     return false;
+}
+
+// ---- Login page for local accounts (options page, since 1.05) ---------------------------------
+
+// Own address entered on the options page: '' when valid, otherwise the error
+function security_guard_ll_path_error($path, $rs_root)
+{
+    if ($path === '') {
+        return '';
+    }
+    if (!preg_match('#^[A-Za-z0-9][A-Za-z0-9._-]{0,63}(/[A-Za-z0-9._-]{1,64}){0,3}$#', $path) || strpos($path, '..') !== false) {
+        return 'Own address: letters, digits, "-", "_", "." and up to 3 "/", e.g. local-login.';
+    }
+    if (preg_match('#\.php$#i', $path) || file_exists(rtrim($rs_root, '/') . '/' . $path)
+        || in_array(strtolower(strtok($path, '/')), array('api', 'pages', 'plugins', 'include', 'filestore', 'lib', 'css', 'js', 'gfx', 'languages', 'batch', 'upgrade'), true)) {
+        return 'Own address "' . $path . '" is used by ResourceSpace. Choose another one, e.g. local-login.';
+    }
+    return '';
+}
+
+// URL path of the local login page file (for the web server rules)
+function security_guard_ll_script_path()
+{
+    $plugin = function_exists('get_plugin_path') ? get_plugin_path('security_guard', true) : false;
+    $path = $plugin ? (string) parse_url($plugin, PHP_URL_PATH) : '/plugins/security_guard';
+    return '/' . trim($path, '/') . '/pages/local_login.php';
+}
+
+// Rules for the own address (nginx and Apache)
+function security_guard_ll_server_snippet(array $s)
+{
+    $own = trim($s['ll_path'], '/');
+    if ($own === '') {
+        return '';
+    }
+    $base = trim((string) parse_url((string) ($GLOBALS['baseurl'] ?? ''), PHP_URL_PATH), '/');
+    $public = '/' . ($base !== '' ? $base . '/' : '') . $own;
+    $script = security_guard_ll_script_path();
+    $rel = ltrim($base !== '' && strpos($script, '/' . $base . '/') === 0 ? substr($script, strlen($base) + 2) : $script, '/');
+    return "# nginx - server { } block of ResourceSpace (then: sudo nginx -t && sudo systemctl reload nginx)\n"
+        . "location = " . $public . " {\n"
+        . "    rewrite ^ " . $script . " last;   # handled by your PHP location; the address stays " . $public . "\n"
+        . "}\n\n"
+        . "# Apache - .htaccess in the ResourceSpace folder (needs mod_rewrite and AllowOverride FileInfo)\n"
+        . "RewriteEngine On\n"
+        . "RewriteRule ^" . preg_quote($own, '') . "$ " . $rel . " [L,QSA]\n";
 }

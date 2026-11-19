@@ -2,7 +2,7 @@
 
 **English** | [Polski](README.pl.md)
 
-Documentation for plugin version **1.04** (ResourceSpace 11).
+Documentation for plugin version **1.05** (ResourceSpace 11).
 *(since X.YY)* marks the plugin version in which a feature first appeared. Features without
 a mark have been available since 1.00. Change history: [CHANGELOG.md](CHANGELOG.md).
 
@@ -14,7 +14,8 @@ It also protects against **deleting many resources at once** (approval by anothe
 and enforces a **share policy** (password, generated passwords, expiry) *(since 1.01)*, and notifies
 chosen users and user groups about **security incidents** *(since 1.02)*. Uploaded files are checked
 (**allowed file types**, content against the extension, dangerous content) and doubtful files go to a
-**quarantine** that needs an administrator's approval *(since 1.04)*.
+**quarantine** that needs an administrator's approval *(since 1.04)*. A **login page for local accounts**
+at its own address can be the only place where local accounts log in *(since 1.05)*.
 
 **Where:** System > Plugins > Security Guard > **Options**. Only administrators (permission `a`)
 can open this page.
@@ -234,6 +235,44 @@ set time (default 30 days) are deleted automatically.
 
 The checks run only for requests that upload files; normal requests are not affected.
 
+## Login page for local accounts *(since 1.05)*
+
+A separate login page with user name and password for **local accounts** (accounts without single
+sign-on), e.g. when the standard login page shows only the SSO button (Custom CSS: "Hide the local
+login fields"). Box **Login page for local accounts** on the options page.
+
+- **How it works:** the page shows the login form of ResourceSpace in the layout of the login page
+  (logo, background, theme). The form posts to the standard `login.php`, so ResourceSpace itself
+  checks the password, the login lockouts, "Keep me logged in", the terms and the session. After a
+  failed login the user comes back to this page with the message of ResourceSpace.
+- **Address – two ways:**
+  - **Link with the key** (no change to the web server):
+    `<base URL>/plugins/security_guard/pages/local_login.php?sgk=<key>`. The 32-character key is
+    created when you save; **New key for the local login page** makes the old link stop working.
+  - **Own address**, e.g. `<base URL>/local-login`: field *Own address*. A plugin cannot add
+    addresses to the web server, so add the rule shown in *Server configuration* (nginx `location`
+    with `rewrite`, or Apache `RewriteRule`). The link with the key keeps working, so you cannot lock
+    yourself out with a missing rule. *The own address also needs the key* adds `?sgk=<key>`.
+  - Without the key or the own address the page answers **404 Not found** (logged as
+    `local_login_denied`).
+- **Local login page only from:** addresses or networks that may open the page (empty = any).
+- **Enforce** (optional): `login.php` refuses a user name and password that do not come from this
+  page (a signed field of the form, valid for 2 hours). The user sees "Local accounts log in on their
+  own login page. Please use single sign-on."; the log shows `local_login_only` (notification type
+  *Login attacks*). Single sign-on is not affected.
+  - *With enforcing: also refuse the password login of the API* (`function=login`, on by default).
+    API calls signed with an API key are not affected.
+  - Not affected: logins on the SimpleSAMLphp side, password reset e-mails.
+  - Keep the link. Without it local accounts (also administrators without SSO) cannot log in.
+    In an emergency switch Security Guard off on the server (see "Disable from the server") –
+    then `login.php` accepts passwords again.
+- **SimpleSAMLphp:** with `$simplesaml_site_block` the page and the login post are let through
+  (the plugin switches the site block off for these two requests). `$simplesaml_allow_standard_login`
+  must be `true`, otherwise SimpleSAMLphp sends local accounts to SSO (the configuration check warns).
+- **To verify on ResourceSpace 11:** the form uses the fields of the ResourceSpace 10.7 login form
+  (`username`, `password`, `remember`, `url`, `user_local_timezone`). If login does not work, check
+  the login form of ResourceSpace 11 in the browser (F12).
+
 ## Incident notifications *(since 1.02)*
 
 Security incidents are sent to the chosen **users** (user names) and to all active members of the
@@ -248,7 +287,7 @@ Incident types (each can be switched on separately):
 | Type | Events |
 |---|---|
 | Blocked attacks | blocked addresses, scanners, admin pages / API keys from other addresses, API "function" confusion, report parameters, attack patterns in "block" mode, SimpleSAMLphp panel |
-| Login attacks | API login lockout, SimpleSAMLphp login limit |
+| Login attacks | API login lockout, SimpleSAMLphp login limit, password logins outside the login page for local accounts *(since 1.05)* |
 | Deletion of many resources | approval requests (also to the administrators when "Notify administrators" is on), blocked permanent deletion, approvals given |
 | Detections without blocking | attack patterns in "log only" mode, corrected login redirect, session hash in the URL |
 | Uploads *(since 1.04)* | file types that are not allowed, quarantined files (also to the administrators when "Notify administrators" is on), approvals |

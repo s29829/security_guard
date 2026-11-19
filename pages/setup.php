@@ -37,7 +37,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action !== '') {
             'del_enabled', 'del_force_trash', 'del_four_eyes', 'del_notify',
             'share_enabled', 'share_require_password', 'share_generate_password', 'share_user_can_change', 'share_allow_never',
             'notify_enabled', 'notify_screen', 'notify_email',
-            'up_inspect', 'up_clamav', 'up_four_eyes', 'up_notify_admins') as $k) {
+            'up_inspect', 'up_clamav', 'up_four_eyes', 'up_notify_admins',
+            'll_enabled', 'll_path_key', 'll_enforce', 'll_enforce_api') as $k) {
             $new[$k] = !empty($_POST[$k]);
         }
         $new['saml_panel'] = in_array($_POST['saml_panel'] ?? '', array('open', 'allowlist', 'block'), true) ? $_POST['saml_panel'] : 'open';
@@ -88,7 +89,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action !== '') {
         if ($new['notify_enabled'] && !$new['notify_users'] && !$new['notify_groups']) {
             $errors[] = 'Notifications are on, but no users or user groups are chosen.';
         }
-        foreach (array('trusted_proxies', 'blocklist', 'admin_ips', 'api_ips') as $k) {
+        $new['ll_path'] = trim(trim((string) ($_POST['ll_path'] ?? '')), '/');
+        $ll_err = security_guard_ll_path_error($new['ll_path'], dirname(__FILE__, 4));
+        if ($ll_err !== '') {
+            $errors[] = $ll_err;
+        }
+        if ($new['ll_enabled'] && strlen($new['ll_key']) < 16) {
+            $new['ll_key'] = bin2hex(random_bytes(16));
+        }
+        if ($new['ll_enforce'] && !$new['ll_enabled']) {
+            $errors[] = 'Enforcing needs the login page for local accounts - switch it on too.';
+        }
+        foreach (array('trusted_proxies', 'blocklist', 'admin_ips', 'api_ips', 'll_ips') as $k) {
             $new[$k] = security_guard_lines($_POST[$k] ?? '');
             foreach ($new[$k] as $ip) {
                 if (!security_guard_valid_cidr($ip)) {
@@ -103,6 +115,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action !== '') {
         $check_ip = security_guard_client_ip($new);
         if ($new['enabled'] && $new['admin_ips'] && !security_guard_ip_in($check_ip, $new['admin_ips'])) {
             $errors[] = 'Not saved: your address ' . $check_ip . ' is not in "Admin pages only from" - you would lock yourself out.';
+        }
+        if ($new['enabled'] && $new['ll_enabled'] && $new['ll_enforce'] && $new['ll_ips'] && !security_guard_ip_in($check_ip, $new['ll_ips'])) {
+            $errors[] = 'Not saved: your address ' . $check_ip . ' is not in "Local login page only from" - with enforcing you could not log in with a local account.';
         }
         if ($new['enabled'] && $new['blocklist'] && security_guard_ip_in($check_ip, $new['blocklist'])) {
             $errors[] = 'Not saved: your address ' . $check_ip . ' is in "Blocked addresses".';
@@ -140,6 +155,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action !== '') {
             exit;
         }
         $errors[] = $err;
+    } elseif ($action === 'll_new_key') {
+        $new = $settings;
+        $new['ll_key'] = bin2hex(random_bytes(16));
+        if (security_guard_save_settings($new)) {
+            security_guard_log('admin', 'local_login_key', 'new key of the local login page by ' . $username);
+            redirect($self . '?done=ll_key#sg-local-login');
+            exit;
+        }
+        $errors[] = 'The settings could not be stored (check write access to ' . security_guard_data_dir() . ').';
     } elseif ($action === 'notify_test') {
         $n = security_guard_send_notification($settings, '[Security Guard] ' . ($applicationname ?? 'ResourceSpace') . ': test notification',
             "Security Guard - test notification\n\nSent by " . $username . ' from the options page at ' . date('Y-m-d H:i:s T') . '. No incident happened.',
@@ -196,6 +220,9 @@ switch ((string) ($_GET['done'] ?? '')) {
         break;
     case 'notify_test':
         $message = 'Test notification sent to ' . (int) ($_GET['n'] ?? 0) . ' user(s).';
+        break;
+    case 'll_key':
+        $message = 'New key of the local login page: the old link does not work any more.';
         break;
     case 'log_cleared':
         $message = 'The security log was deleted.';
@@ -267,7 +294,7 @@ include '../../../include/header.php';
         .sg-ok { color: #2e7d32; font-weight: bold; } .sg-warn { color: #c62828; font-weight: bold; } .sg-info { opacity: 0.75; font-weight: bold; }
         .sg-log { max-height: 420px; overflow: auto; }
         .sg-pre { white-space: pre; overflow: auto; padding: 8px; border: 1px solid rgba(128, 128, 128, 0.4); border-radius: 4px; font-family: monospace; font-size: 0.85em; max-height: 360px; }
-        .sg-m0 { margin: 0 !important; } .sg-w5 { width: 5em; } .sg-w7 { width: 7em; } .sg-wide { width: 36em; max-width: 100%; }
+        .sg-m0 { margin: 0 !important; } .sg-w5 { width: 5em; } .sg-w7 { width: 7em; } .sg-w15 { width: 15em; } .sg-wide { width: 36em; max-width: 100%; }
         .sg-list { max-height: 160px; overflow: auto; border: 1px solid rgba(128, 128, 128, 0.4); border-radius: 4px; padding: 4px 8px; }
         .sg-outline { background: transparent !important; border: 1px solid currentColor !important; color: inherit !important; }
     </style>
@@ -400,6 +427,36 @@ include '../../../include/header.php';
             ?>
         </div>
 
+        <div class="sg-box" id="sg-local-login">
+            <h3>Login page for local accounts</h3>
+            <p class="sg-help sg-m0">A separate page with user name and password for accounts without single sign-on - e.g. when the standard login page shows only
+                the SSO button (Custom CSS: "Hide the local login fields"). The form posts to login.php, so ResourceSpace checks the password, the lockouts and the session.
+                Without the key or the own address the page answers "Not found".</p>
+            <?php $check('ll_enabled', 'Login page for local accounts is on', 'A secret key for the link is created when you save.'); ?>
+            <?php if ($settings['ll_enabled'] && strlen($settings['ll_key']) >= 16) { ?>
+                <p class="sg-m0"><b>Link with the key</b> (works without changes to the web server; keep it secret, e.g. in a password manager):<br>
+                    <a href="<?php echo $h(security_guard_ll_url($settings, array(), false)); ?>" target="_blank" rel="noopener"><code><?php echo $h(security_guard_ll_url($settings, array(), false)); ?></code></a></p>
+                <?php if (trim($settings['ll_path'], '/') !== '') { ?>
+                    <p class="sg-m0"><b>Own address</b> (needs the rule in "Server configuration" below):<br>
+                        <a href="<?php echo $h(security_guard_ll_url($settings)); ?>" target="_blank" rel="noopener"><code><?php echo $h(security_guard_ll_url($settings)); ?></code></a></p>
+                <?php } ?>
+            <?php } ?>
+            <div class="sg-row">
+                <label>Own address <?php echo $h(rtrim((string) $baseurl, '/') . '/'); ?><input type="text" name="ll_path" value="<?php echo $h($settings['ll_path']); ?>" class="sg-w15" placeholder="local-login" spellcheck="false"></label>
+                <span class="sg-help sg-m0">Empty = only the link with the key. Letters, digits, "-", "_", ".".</span>
+            </div>
+            <?php $check('ll_path_key', 'The own address also needs the key', 'Without it the address itself is the secret (choose one that is hard to guess).'); ?>
+            <div class="sg-grid">
+                <div><label for="sg-lli">Local login page only from</label>
+                    <textarea id="sg-lli" name="ll_ips" spellcheck="false"><?php echo $h($lines($settings['ll_ips'])); ?></textarea>
+                    <span class="sg-help">Addresses or networks, one per line. Empty = from anywhere (with the key or the own address).</span></div>
+            </div>
+            <?php
+            $check('ll_enforce', 'Enforce: local accounts log in only on this page', 'login.php refuses a user name and password that do not come from this page (the user sees "Local accounts log in on their own login page"). Single sign-on is not affected. Keep the link: without it local accounts (also administrators without SSO) cannot log in - in an emergency switch Security Guard off on the server (box "Disable from the server").');
+            $check('ll_enforce_api', 'With enforcing: also refuse the password login of the API (function=login)', 'Systems that sign API calls with an API key are not affected.');
+            ?>
+        </div>
+
         <div class="sg-box" id="sg-notify">
             <h3>Incident notifications</h3>
             <p class="sg-help sg-m0">Security incidents are sent to the chosen users and to all active members of the chosen user groups - as a ResourceSpace notification
@@ -500,6 +557,13 @@ include '../../../include/header.php';
         <button type="submit" name="action" value="notify_test" class="sg-outline">Send test notification</button>
         <span class="sg-help sg-m0">to the saved recipients, with the saved channels (also when notifications are off).</span>
     </form>
+    <?php if ($settings['ll_enabled'] && strlen($settings['ll_key']) >= 16) { ?>
+        <form method="post" action="<?php echo $h($self); ?>" class="sg-row">
+            <?php generateFormToken('security_guard'); ?>
+            <button type="submit" name="action" value="ll_new_key" class="sg-outline">New key for the local login page</button>
+            <span class="sg-help sg-m0">The old link (and the own address with the key) stops working at once.</span>
+        </form>
+    <?php } ?>
 
     <!-- Upload quarantine -->
     <?php
@@ -662,6 +726,10 @@ include '../../../include/header.php';
         <p>A plugin only sees requests that reach ResourceSpace's PHP code. Rate limits before PHP, static files and banning addresses belong to the web server and the system firewall:</p>
         <p><b>nginx</b></p>
         <div class="sg-pre"><?php echo $h(security_guard_nginx_snippet($settings)); ?></div>
+        <?php $ll_snip = security_guard_ll_server_snippet($settings); if ($ll_snip !== '') { ?>
+            <p><b>Own address of the login page for local accounts</b></p>
+            <div class="sg-pre"><?php echo $h($ll_snip); ?></div>
+        <?php } ?>
         <p><b>fail2ban</b> - bans addresses that were blocked several times (lines <code>action=block</code> of the security log):</p>
         <div class="sg-pre"><?php echo $h(security_guard_fail2ban_snippet()); ?></div>
     </details>

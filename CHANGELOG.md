@@ -2,6 +2,9 @@
 
 Plugin version numbers: 1.00, 1.01, 1.02 … (+0.01 for every change). The current version is in `security_guard.yaml`.
 
+## [1.05] - 2026-11-18
+- Login page for local accounts: a separate page with user name and password (link with a secret key or an own address with an nginx / Apache rule, optional address list); optional enforcing - login.php and the API login accept passwords only from this page.
+
 ## [1.04] - 2026-11-13
 - Upload verification: allowed file types (groups images, video, documents, audio + own extensions, exclusions), advanced checks (content against the extension, programs, scripts, PHP code, active SVG/PDF content, Office/OpenDocument macros, encrypted files, private keys and sensitive files, suspicious names, EICAR), optional ClamAV scan; quarantine of doubtful files with approval by an administrator (four eyes, approval by SHA-256 for a set time, download for analysis, automatic deletion), modes off/log/enforce, notifications (type Uploads).
 
