@@ -66,6 +66,7 @@ function security_guard_defaults()
 {
     return array(
         'enabled'              => true,
+        'paused_until'         => 0,      // pause: checks off until this time (Unix time, since 1.06)
         // patches for known weaknesses
         'patch_report_params'  => true,   // numeric date parameters of reports (SQL injection)
         'patch_login_redirect' => true,   // "url" of login.php / terms.php only to this site
@@ -156,7 +157,7 @@ function security_guard_incident_categories()
         'deletion'   => 'Deletion of many resources (approval requests, blocked permanent deletion, approvals given)',
         'detection'  => 'Detections without blocking (attack patterns in "log only" mode, corrected login redirect, session in the URL)',
         'upload'     => 'Uploads (file types that are not allowed, quarantined files, approvals)',
-        'admin'      => 'Changes of Security Guard (settings, protection switched off, log cleared, reset)',
+        'admin'      => 'Changes of Security Guard (settings, protection switched off or paused, log cleared, reset)',
     );
 }
 
@@ -184,6 +185,12 @@ function security_guard_incident_category($action, $rule)
         return 'detection';
     }
     return '';
+}
+
+// Protection on and not paused (since 1.06)
+function security_guard_is_on(array $s)
+{
+    return $s['enabled'] && (int) $s['paused_until'] <= time();
 }
 
 function security_guard_settings()
@@ -433,7 +440,7 @@ function security_guard_run()
         return;
     }
     $s = security_guard_settings();
-    if (!$s['enabled']) {
+    if (!security_guard_is_on($s)) {
         return;
     }
     $path   = security_guard_path();
@@ -1233,7 +1240,7 @@ function security_guard_ll_is_page()
 // May the page be shown? '' = yes, otherwise the reason (off | ip | key)
 function security_guard_ll_access(array $s)
 {
-    if (!$s['enabled'] || !$s['ll_enabled'] || strlen($s['ll_key']) < 16) {
+    if (!security_guard_is_on($s) || !$s['ll_enabled'] || strlen($s['ll_key']) < 16) {
         return 'off';
     }
     if ($s['ll_ips'] && !security_guard_ip_in(security_guard_client_ip($s), $s['ll_ips'])) {

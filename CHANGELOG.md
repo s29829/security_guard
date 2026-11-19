@@ -2,6 +2,15 @@
 
 Plugin version numbers: 1.00, 1.01, 1.02 … (+0.01 for every change). The current version is in `security_guard.yaml`.
 
+## [1.08] - 2026-11-19
+- Options page: fixed a script error that stopped the section status (Recommended / Custom / Low) and Reset from appearing; the boxes Deletion approvals and Upload quarantine show the status of their settings
+
+## [1.07] - 2026-11-19
+- Options page: status of every settings box against the recommended settings (Recommended, Custom when stronger, Low when below the recommendation), fields below the recommendation outlined with the recommended value, recommended choices marked in the lists; Reset button per box (recommended values) that turns into Undo until the settings are saved
+
+## [1.06] - 2026-11-19
+- Options page redesign: top bar with the main switch (blue button), pause for a chosen time (15 min - 24 h, switches on again by itself) and the Configurator button; two columns - settings on the left (recommended settings and collapsible Advanced settings that depend on the system), status on the right (quarantine, deletion approvals, configuration check, collapsible log, server configuration, emergency switch, reset); configurator with three protection levels (Basic, Recommended, High) shown on the first start
+
 ## [1.05] - 2026-11-18
 - Login page for local accounts: a separate page with user name and password (link with a secret key or an own address with an nginx / Apache rule, optional address list); optional enforcing - login.php and the API login accept passwords only from this page.
 

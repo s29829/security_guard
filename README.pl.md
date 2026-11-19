@@ -2,7 +2,7 @@
 
 [English](README.md) | **Polski**
 
-Dokumentacja dla wersji wtyczki **1.05** (ResourceSpace 11).
+Dokumentacja dla wersji wtyczki **1.08** (ResourceSpace 11).
 Znacznik *(od X.YY)* oznacza wersję wtyczki, od której funkcja jest dostępna. Funkcje bez
 znacznika są dostępne od wersji 1.00. Historia zmian (po angielsku): [CHANGELOG.md](CHANGELOG.md).
 
@@ -27,6 +27,88 @@ i fail2ban do tych części (Apache: zob. „Apache zamiast nginx”). Wirtualne
 i zgłaszaj słabości zespołowi ResourceSpace.
 
 ---
+
+## Strona opcji, włącznik, pauza i konfigurator *(od 1.06)*
+
+**Górny pasek** – stan ochrony (**ON**, **PAUSED** z godziną końca, **OFF**), poziom ochrony
+zgodny z ustawieniami (Basic, Recommended, High albo Custom), Twój adres, liczba żądań
+zablokowanych w ostatnich 24 godzinach i trzy przyciski:
+
+- **Turn off / Turn on** (niebieski) – główny włącznik. Wyłączona wtyczka nic nie robi, także bez
+  dezaktywacji. Włączenie sprawdza, czy nie zablokujesz sobie dostępu (listy adresów), i kończy
+  pauzę.
+- **Pause** – wszystkie kontrole wyłączone na 15 minut, 1 godzinę, 4 godziny albo 24 godziny (np.
+  na czas zaplanowanego importu albo szukania fałszywego alarmu). Potem kontrole włączają się same;
+  **Resume now** kończy pauzę wcześniej. Pauza jest zapisana w ustawieniach (`paused_until`) i nie
+  obciąża zwykłych żądań. Wyłączenie, pauza i wznowienie trafiają do logu bezpieczeństwa (typ
+  powiadomień „Changes of Security Guard”).
+- **Configurator…** – otwiera wybór poziomu ochrony (niżej).
+
+**Dwie kolumny** (na ekranach od 1100 px; na mniejszych jedna kolumna): po lewej **ustawienia**
+(dwie trzecie szerokości, jak edytor w Custom CSS), po prawej **status**: kwarantanna plików
+i zatwierdzanie usuwania (otwarte, gdy coś czeka), kontrola konfiguracji, log bezpieczeństwa
+(zwinięty), konfiguracja serwera, wyłącznik awaryjny i reset. Przeglądarka zapamiętuje, które
+pola kolumny statusu są otwarte.
+
+Ustawienia są podzielone na dwie części:
+
+- **Settings – recommended for most sites** (zalecane dla większości serwisów): łatki, wykrywanie
+  ataków (blokowanie skanerów, wzorce ataków, strony błędów i limit logowania SimpleSAMLphp),
+  ochrona przed usuwaniem, polityka udostępniania, weryfikacja plików (tryb, grupy typów, kontrola
+  zawartości), powiadomienia o incydentach, usuwanie `X-Powered-By`.
+- **Advanced settings** (zwinięte, z ostrzeżeniem) – ustawienia zależne od systemu, które przy
+  błędnej wartości mogą zablokować użytkowników albo administratorów: firewall (zaufane proxy,
+  blokowane adresy, strony i adresy administracyjne, adresy API, lista skanerów, ścieżki bez
+  kontroli wzorców), formularz logowania lokalnego i strony admina SimpleSAMLphp, strona logowania
+  dla kont lokalnych, dodatkowe / zablokowane rozszerzenia, ścieżki bez kontroli plików, ClamAV,
+  Permissions-Policy, rozmiar logu. Pole otwiera się samo po błędzie zapisu.
+
+**Konfigurator.** Przy pierwszym uruchomieniu (brak zapisanych ustawień – także po „Reset plugin”)
+strona opcji pokazuje wybór poziomu ochrony; później otwiera go przycisk **Configurator…**. Poziom
+zmienia tylko ustawienia ogólne; ustawienia zależne od systemu (listy adresów, proxy, strony
+administracyjne, strona logowania lokalnego, ClamAV, odbiorcy powiadomień, dodatkowe typy plików)
+zostają bez zmian. Zastosowanie poziomu włącza Security Guard.
+
+| Poziom | Co ustawia |
+|---|---|
+| **1. Basic** | Wszystkie łatki, blokowanie skanerów, wzorce ataków *log only*, SimpleSAMLphp: ukryte błędy, 10 prób logowania / 10 min, ochrona przed usuwaniem (najpierw kosz, 50 do „Deleted” i 10 trwale na użytkownika i godzinę), pliki *log only* z kontrolą zawartości, usunięty `X-Powered-By`. To samo co ustawienia domyślne. |
+| **2. Recommended** | Basic + polityka udostępniania (wymagane i generowane hasło, min. 12 znaków, ważność 14 dni, maks. 30, bez „Never”) + weryfikacja plików *enforce* (tylko obrazy, wideo i dokumenty; wątpliwe pliki do kwarantanny). |
+| **3. High** | Recommended + wzorce ataków *block*, jedna sesja na konto, SimpleSAMLphp 5 prób / 10 min, usuwanie 20 na godzinę do „Deleted” i trwałe usuwanie tylko na serwerze, udostępnienia z hasłem 16+ znaków, 7 dni, maks. 14. |
+
+Przy pierwszym uruchomieniu **Skip** zapisuje ustawienia domyślne (poziom Basic) bez zmian.
+
+*Przed 1.06* strona miała jedną kolumnę: włącznikiem było pole „Security Guard is on” w sekcji
+„Protection”, wszystkie ustawienia były w jednym formularzu, nie było pauzy ani konfiguratora.
+
+### Status sekcji, Reset i Undo *(od 1.07)*
+
+Każde pole ustawień pokazuje w prawym górnym rogu porównanie z **ustawieniami zalecanymi**
+(poziom **Recommended** konfiguratora; ustawienia spoza poziomów: wartości domyślne):
+
+- **Recommended** (zielony znaczek) – zgodnie z zaleceniami,
+- **Custom** (zielony podwójny znaczek) – co najmniej jedno ustawienie jest **mocniejsze** od
+  zalecanego i żadne nie jest słabsze (np. wzorce ataków *block*, lista adresów administratorów,
+  niższy limit usuwania, ClamAV); lista w podpowiedzi,
+- **Low** (czerwone ostrzeżenie) – co najmniej jedno ustawienie jest **poniżej zaleceń**; te pola są
+  obramowane na pomarańczowo, obok jest zalecana wartość (np. „Recommended: on”), a na listach
+  wyboru zalecana opcja ma dopisek „(recommended)”.
+
+Gdy włącznik pola jest wyłączony (ochrona przed usuwaniem, polityka udostępniania, powiadomienia,
+strona logowania lokalnego), porównywany jest tylko włącznik. Ustawienia, które nie zmieniają
+poziomu ochrony (np. częstotliwość powiadomień, rozmiar logu), nie są porównywane. Status zmienia
+się w trakcie edycji.
+
+**Reset** (przycisk obrysowany obok statusu) wpisuje do formularza zalecane wartości tego pola;
+potem zmienia się w **Undo**, który przywraca poprzednie wartości. Nic nie jest zapisywane przed
+**Save settings** – po zapisie (strona się przeładowuje) Undo znika. Reset nie zmienia wartości
+zależnych od systemu spoza reguł (zaufane proxy, odbiorcy powiadomień, klucz i własny adres strony
+logowania lokalnego, polecenie ClamAV).
+
+Pola **Deletion approvals** i **Upload quarantine** w kolumnie statusu pokazują status swoich
+ustawień (Deletion protection, Upload verification) *(od 1.08)*.
+
+*Przed 1.07* pola nie miały statusu ani przycisku Reset. W 1.07 błąd skryptu blokował wyświetlanie
+statusu (poprawione w 1.08).
 
 ## Jak działa i obciążenie
 
@@ -498,7 +580,7 @@ pierwszym zapisie; potrzebuje tylko prawa zapisu do filestore, które ResourceSp
 Ramka jest zwinięta – kliknij tytuł, aby ją rozwinąć; otwiera się sama po nieudanym resecie.
 
 **Reset plugin** (po wpisaniu `RESET`) usuwa `<filestore>/security_guard`: ustawienia, log, liczniki,
-wnioski i zgody na usunięcie, kwarantannę uploadów oraz plik wyłącznika awaryjnego. Potem obowiązują ustawienia domyślne. Dane ResourceSpace się nie
+wnioski i zgody na usunięcie, kwarantannę uploadów oraz plik wyłącznika awaryjnego. Potem obowiązują ustawienia domyślne i ponownie otwiera się konfigurator *(od 1.06)*. Dane ResourceSpace się nie
 zmieniają. Operacji nie można cofnąć.
 
 ## Licencja

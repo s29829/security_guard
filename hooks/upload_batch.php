@@ -11,7 +11,7 @@ function HookSecurity_guardUpload_batchModify_upload_file($upfilename, $upfilepa
             return false;
         }
         $s = security_guard_settings();
-        if (!$s['enabled'] || $s['up_mode'] === 'off' || !is_string($upfilepath) || !is_file($upfilepath)) {
+        if (!security_guard_is_on($s) || $s['up_mode'] === 'off' || !is_string($upfilepath) || !is_file($upfilepath)) {
             return false;
         }
         require_once dirname(__FILE__, 2) . '/include/upload.php';

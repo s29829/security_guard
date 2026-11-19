@@ -160,7 +160,7 @@ function security_guard_checklist(array $s)
     $add($random ? 'ok' : 'warn', 'Random session hash',
         $random ? 'Every login gets a new random session hash.'
             : '$randomised_session_hash is false: the session hash depends only on the password and the day (session fixation). '
-              . 'Set it to true in config.php or turn on "One session per account" below (one active session per account).');
+              . 'Set it to true in config.php or turn on "One session per account" in the settings (one active session per account).');
 
     $add(!empty($g['ip_forwarded_for']) ? 'warn' : 'ok', 'Client address used by ResourceSpace',
         !empty($g['ip_forwarded_for'])
@@ -198,7 +198,7 @@ function security_guard_checklist(array $s)
     if (is_dir(dirname(__FILE__, 4) . '/plugins/simplesaml')) {
         $add($s['saml_panel'] !== 'open' ? 'ok' : 'warn', 'SimpleSAMLphp local login',
             $s['saml_panel'] !== 'open' ? 'Local login and admin pages: ' . $s['saml_panel'] . '.'
-                : 'The local login form and admin pages of SimpleSAMLphp are open to everyone. Choose "allowlist" or "block" below, or restrict them in nginx (snippet below).');
+                : 'The local login form and admin pages of SimpleSAMLphp are open to everyone. Choose "allowlist" or "block" in the advanced settings, or restrict them in nginx (box "Server configuration").');
         $add('info', 'SimpleSAMLphp error pages', 'Hidden by the plugin when SimpleSAMLphp reads its configuration from ResourceSpace ($simplesaml_rsconfig). '
             . 'Otherwise set showerrors / errorreporting to false in its config.php.');
     }
@@ -207,12 +207,12 @@ function security_guard_checklist(array $s)
     $add($state !== null ? 'ok' : 'warn', 'Deleting resources',
         $state !== null ? 'Deleted resources first go to the state ' . (int) $state . ' ("Deleted") and can be restored; permanent deletion: '
             . ($s['del_perm_mode'] === 'block' ? 'off in the browser.' : 'limited, above the limit with approval.')
-            : '$resource_deletion_state is not set: deleting removes files at once. Turn on "Always move to Deleted first" below.');
+            : '$resource_deletion_state is not set: deleting removes files at once. Turn on "Always move to Deleted first" in the settings.');
 
     $add(!empty($g['share_password_required']) ? 'ok' : 'warn', 'External shares',
         (!empty($g['share_password_required']) ? 'Password required' : 'No password required ($share_password_required)')
         . sprintf(', at most %d days, "Never" %s.', (int) ($g['resource_share_expire_days'] ?? 0), !empty($g['resource_share_expire_never']) ? 'allowed' : 'not allowed')
-        . ($s['share_enabled'] ? ' (share policy of this plugin is on)' : ' Turn on the share policy below to enforce it.'));
+        . ($s['share_enabled'] ? ' (share policy of this plugin is on)' : ' Turn on the share policy in the settings to enforce it.'));
 
     $add($s['up_mode'] === 'enforce' ? 'ok' : ($s['up_mode'] === 'log' ? 'info' : 'warn'), 'Upload verification',
         $s['up_mode'] === 'enforce' ? 'On: file types are checked' . ($s['up_inspect'] ? ', doubtful files go to the quarantine' : '') . ($s['up_clamav'] ? ', virus scan with ClamAV' : '') . '.'
@@ -221,7 +221,7 @@ function security_guard_checklist(array $s)
 
     $add($s['notify_enabled'] && ($s['notify_users'] || $s['notify_groups']) ? 'ok' : 'info', 'Incident notifications',
         $s['notify_enabled'] ? sprintf('On: %d user name(s), %d user group(s), incidents: %s.', count($s['notify_users']), count($s['notify_groups']), implode(', ', $s['notify_events']) ?: 'none')
-            : 'Off - incidents are only written to the security log. Turn on "Incident notifications" below.');
+            : 'Off - incidents are only written to the security log. Turn on "Incident notifications" in the settings.');
 
     if ($s['ll_enabled']) {
         $saml_std = !array_key_exists('simplesaml_allow_standard_login', $g) || !empty($g['simplesaml_allow_standard_login']);
@@ -553,4 +553,194 @@ function security_guard_ll_server_snippet(array $s)
         . "# Apache - .htaccess in the ResourceSpace folder (needs mod_rewrite and AllowOverride FileInfo)\n"
         . "RewriteEngine On\n"
         . "RewriteRule ^" . preg_quote($own, '') . "$ " . $rel . " [L,QSA]\n";
+}
+
+// ---- Configurator: protection levels (options page, since 1.06) ------------------------------
+// Only general settings. System-specific ones (IP lists, proxies, admin paths, local login page,
+// ClamAV, notification recipients, allowed extensions) are never changed by a level.
+
+function security_guard_profiles()
+{
+    $basic = array(
+        'patch_report_params' => true, 'patch_login_redirect' => true, 'patch_api_confusion' => true,
+        'patch_api_lockout' => true, 'patch_get_session' => true, 'force_random_session' => false,
+        'saml_hide_errors' => true, 'saml_limit' => 10, 'saml_window' => 10,
+        'block_scanners' => true, 'waf_mode' => 'log', 'remove_powered_by' => true,
+        'del_enabled' => true, 'del_force_trash' => true, 'del_soft_limit' => 50, 'del_perm_limit' => 10,
+        'del_window' => 60, 'del_perm_mode' => 'limit', 'del_notify' => true,
+        'share_enabled' => false, 'up_mode' => 'log', 'up_inspect' => true,
+    );
+    $recommended = array_merge($basic, array(
+        'share_enabled' => true, 'share_require_password' => true, 'share_generate_password' => true,
+        'share_password_length' => 12, 'share_default_days' => 14, 'share_max_days' => 30,
+        'share_user_can_change' => true, 'share_allow_never' => false,
+        'up_mode' => 'enforce',
+    ));
+    $high = array_merge($recommended, array(
+        'force_random_session' => true, 'waf_mode' => 'block', 'saml_limit' => 5,
+        'del_soft_limit' => 20, 'del_perm_limit' => 0, 'del_perm_mode' => 'block',
+        'share_password_length' => 16, 'share_default_days' => 7, 'share_max_days' => 14,
+    ));
+    return array(
+        'basic' => array(
+            'label' => '1. Basic',
+            'desc'  => 'Safe for every site: nothing that users notice in normal work.',
+            'items' => array('Patches for known weaknesses', 'Scanner blocking, attack patterns logged (not blocked)',
+                'Login limit of SimpleSAMLphp, error details hidden', 'Deletion protection: trash first, 50 / 10 resources per hour',
+                'Uploads checked and logged (not blocked)', 'X-Powered-By removed'),
+            'values' => $basic,
+        ),
+        'recommended' => array(
+            'label' => '2. Recommended',
+            'desc'  => 'Basic plus rules recommended for most sites.',
+            'items' => array('Everything from Basic', 'Share policy: password (generated, 12+ characters), expiry 14 days, at most 30, no "Never"',
+                'Upload verification enforced: file types outside images, video and documents are blocked, doubtful files go to the quarantine'),
+            'values' => $recommended,
+        ),
+        'high' => array(
+            'label' => '3. High',
+            'desc'  => 'Stricter rules. Users notice them; check the security log after switching.',
+            'items' => array('Everything from Recommended', 'Attack patterns blocked (not only logged)', 'One session per account (a new login ends the old session)',
+                'Deletion: 20 resources per hour to the trash, permanent deletion only on the server', 'Shares: 16+ character passwords, 7 days, at most 14',
+                'SimpleSAMLphp: 5 login attempts per 10 minutes'),
+            'values' => $high,
+        ),
+    );
+}
+
+// Level whose values all match the settings ('' = custom)
+function security_guard_profile_match(array $s)
+{
+    foreach (security_guard_profiles() as $key => $p) {
+        $match = true;
+        foreach ($p['values'] as $k => $v) {
+            if (!array_key_exists($k, $s) || $s[$k] !== $v) {
+                $match = false;
+                break;
+            }
+        }
+        if ($match) {
+            return $key;
+        }
+    }
+    return '';
+}
+
+// ---- Section status against the recommended settings (options page, since 1.07) ---------------
+// Recommended value = level "Recommended" of the configurator, otherwise the default setting.
+// Field: array(direction, label[, order]). Directions (what is stronger than recommended):
+//   on / off      - checked / unchecked is stronger
+//   higher/lower  - a bigger / smaller number is stronger
+//   limit0        - a smaller number is stronger, 0 = no limit (weakest)
+//   order         - later value of the list (3rd element) is stronger
+//   list_on       - entries are stronger (recommended: empty)
+//   list_off      - entries are weaker (recommended: empty)
+//   fewer         - entries outside the recommended list are weaker, fewer entries stronger
+//   more          - missing recommended entries are weaker, more entries stronger
+//   nonempty      - empty is weaker
+//   neutral       - not compared (only reset)
+// master: switch of the section; when it is off, the other fields are not compared.
+function security_guard_section_rules()
+{
+    return array(
+        'patches' => array('fields' => array(
+            'patch_report_params'  => array('on', 'Report dates only as numbers'),
+            'patch_login_redirect' => array('on', 'Redirect after login only to this site'),
+            'patch_api_confusion'  => array('on', 'API: one source of the function name'),
+            'patch_api_lockout'    => array('on', 'API login lockout'),
+            'patch_get_session'    => array('on', 'Session only from the cookie'),
+            'force_random_session' => array('on', 'One session per account'),
+        )),
+        'detection' => array('fields' => array(
+            'block_scanners'   => array('on', 'Block scanners'),
+            'waf_mode'         => array('order', 'Attack patterns', array('off', 'log', 'block')),
+            'saml_hide_errors' => array('on', 'Hide error details'),
+            'saml_limit'       => array('limit0', 'Login attempts per IP'),
+            'saml_window'      => array('higher', 'Login attempts window'),
+        )),
+        'deletion' => array('master' => 'del_enabled', 'fields' => array(
+            'del_enabled'       => array('on', 'Deletion protection'),
+            'del_force_trash'   => array('on', 'Always move to "Deleted" first'),
+            'del_soft_limit'    => array('limit0', 'Resources moved to "Deleted" without approval'),
+            'del_perm_limit'    => array('lower', 'Permanent deletions without approval'),
+            'del_window'        => array('higher', 'Counting window'),
+            'del_perm_mode'     => array('order', 'Permanent deletion in the browser', array('limit', 'block')),
+            'del_grant_minutes' => array('lower', 'Approval valid for'),
+            'del_four_eyes'     => array('on', 'Four eyes'),
+            'del_notify'        => array('on', 'Notify administrators'),
+        )),
+        'share' => array('master' => 'share_enabled', 'fields' => array(
+            'share_enabled'           => array('on', 'Share policy'),
+            'share_require_password'  => array('on', 'Password required'),
+            'share_generate_password' => array('on', 'Propose a generated password'),
+            'share_password_length'   => array('higher', 'Minimum password length'),
+            'share_default_days'      => array('lower', 'Default expiry'),
+            'share_max_days'          => array('lower', 'Maximum expiry'),
+            'share_user_can_change'   => array('off', 'Users may change the expiry date'),
+            'share_allow_never'       => array('off', 'Allow "Never"'),
+        )),
+        'upload' => array('fields' => array(
+            'up_mode'          => array('order', 'Mode', array('off', 'log', 'enforce')),
+            'up_groups'        => array('fewer', 'Allowed file types'),
+            'up_inspect'       => array('on', 'Advanced checks'),
+            'up_scan_mb'       => array('higher', 'Documents scanned completely up to'),
+            'up_grant_hours'   => array('lower', 'Approved file valid for'),
+            'up_keep_days'     => array('neutral', 'Quarantine kept for'),
+            'up_four_eyes'     => array('on', 'Four eyes'),
+            'up_notify_admins' => array('on', 'Notify administrators'),
+        )),
+        'notify' => array('master' => 'notify_enabled', 'fields' => array(
+            'notify_enabled'      => array('on', 'Notifications'),
+            'notify_events'       => array('more', 'Incidents'),
+            'notify_screen'       => array('neutral', 'ResourceSpace notification'),
+            'notify_email'        => array('neutral', 'E-mail'),
+            'notify_throttle'     => array('neutral', 'One per rule and address'),
+            'notify_max_per_hour' => array('neutral', 'At most per hour'),
+        )),
+        'headers' => array('fields' => array(
+            'remove_powered_by' => array('on', 'Remove X-Powered-By'),
+        )),
+        'firewall' => array('fields' => array(
+            'blocklist'      => array('list_on', 'Blocked addresses'),
+            'admin_ips'      => array('list_on', 'Admin pages only from'),
+            'admin_paths'    => array('more', 'Admin pages'),
+            'api_ips'        => array('list_on', 'API key access only from'),
+            'scanner_agents' => array('more', 'Scanners'),
+            'waf_skip_paths' => array('fewer', 'Paths without the attack pattern check'),
+            'saml_panel'     => array('order', 'SimpleSAMLphp local login form', array('open', 'allowlist', 'block')),
+        )),
+        'local_login' => array('master' => 'll_enabled', 'fields' => array(
+            'll_enabled'     => array('on', 'Login page for local accounts'),
+            'll_path_key'    => array('on', 'The own address also needs the key'),
+            'll_ips'         => array('list_on', 'Local login page only from'),
+            'll_enforce'     => array('on', 'Enforce'),
+            'll_enforce_api' => array('on', 'Also refuse the API password login'),
+        )),
+        'upload_adv' => array('fields' => array(
+            'up_extra_ext'  => array('list_off', 'Also allow (extensions)'),
+            'up_block_ext'  => array('list_on', 'Do not allow (extensions)'),
+            'up_skip_paths' => array('fewer', 'Not checked (paths)'),
+            'up_clamav'     => array('on', 'Virus scan with ClamAV'),
+        )),
+        'headers_log' => array('fields' => array(
+            'permissions_policy' => array('nonempty', 'Permissions-Policy'),
+            'log_max_kb'         => array('neutral', 'Log size'),
+        )),
+    );
+}
+
+// Configuration for the script of the options page: [section => [master, fields => [name => dir, label, rec, order]]]
+function security_guard_section_config()
+{
+    $profiles = security_guard_profiles();
+    $rec = array_merge(security_guard_defaults(), $profiles['recommended']['values']);
+    $out = array();
+    foreach (security_guard_section_rules() as $key => $sec) {
+        $fields = array();
+        foreach ($sec['fields'] as $name => $r) {
+            $fields[$name] = array('dir' => $r[0], 'label' => $r[1], 'rec' => $rec[$name] ?? null, 'order' => $r[2] ?? array());
+        }
+        $out[$key] = array('master' => $sec['master'] ?? '', 'fields' => $fields);
+    }
+    return $out;
 }

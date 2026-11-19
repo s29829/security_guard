@@ -27,7 +27,7 @@ function HookSecurity_guardAllAdditionalheaderjs()
             return false;
         }
         $s = security_guard_settings();
-        if (!$s['enabled']) {
+        if (!security_guard_is_on($s)) {
             return false;
         }
         $nonce = !empty($CSP_nonce) ? ' nonce="' . htmlspecialchars($CSP_nonce) . '"' : '';

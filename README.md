@@ -2,7 +2,7 @@
 
 **English** | [Polski](README.pl.md)
 
-Documentation for plugin version **1.05** (ResourceSpace 11).
+Documentation for plugin version **1.08** (ResourceSpace 11).
 *(since X.YY)* marks the plugin version in which a feature first appeared. Features without
 a mark have been available since 1.00. Change history: [CHANGELOG.md](CHANGELOG.md).
 
@@ -26,6 +26,88 @@ templates for nginx and fail2ban for those parts (Apache: see "Apache instead of
 ResourceSpace up to date and report weaknesses to the ResourceSpace team.
 
 ---
+
+## Options page, switch, pause and configurator *(since 1.06)*
+
+**Top bar** – the state of the protection (**ON**, **PAUSED** with the end time, **OFF**), the
+protection level that matches the settings (Basic, Recommended, High or Custom), your address,
+the number of requests blocked in the last 24 hours, and three buttons:
+
+- **Turn off / Turn on** (blue) – the main switch. Off = the plugin does nothing, also without
+  deactivating it. Switching on checks that you would not lock yourself out (address lists) and
+  ends a pause.
+- **Pause** – all checks off for 15 minutes, 1 hour, 4 hours or 24 hours (e.g. for a planned
+  import or while looking for a false alarm). Afterwards the checks switch on again by themselves;
+  **Resume now** ends the pause earlier. The pause is stored in the settings (`paused_until`) and
+  costs nothing on normal requests. Switching off, pausing and resuming are written to the
+  security log (notification type "Changes of Security Guard").
+- **Configurator…** – opens the choice of the protection level (below).
+
+**Two columns** (on screens 1100 px wide and more; one column on smaller screens): on the left the
+**settings** (two thirds of the width, like the editor of Custom CSS), on the right the **status**:
+upload quarantine and deletion approvals (open when something is waiting), configuration check,
+security log (collapsed), server configuration, emergency switch and reset. The browser remembers
+which boxes of the status column are open.
+
+The settings are divided into two parts:
+
+- **Settings – recommended for most sites:** patches, attack detection (scanner blocking,
+  attack patterns, SimpleSAMLphp error pages and login limit), deletion protection, share policy,
+  upload verification (mode, file type groups, checks of the content), incident notifications,
+  removing `X-Powered-By`.
+- **Advanced settings** (collapsed, with a warning) – settings that depend on the system and can
+  lock out users or administrators when they are wrong: firewall (trusted proxies, blocked
+  addresses, admin pages and addresses, API addresses, list of scanners, paths without the attack
+  pattern check), SimpleSAMLphp local login form and admin pages, login page for local accounts,
+  extra / blocked file extensions, paths without upload checks, ClamAV, Permissions-Policy, log size.
+  The box opens by itself after an error when saving.
+
+**Configurator.** On the first start (no saved settings – also after "Reset plugin") the options
+page shows the choice of a protection level; later it opens with the **Configurator…** button.
+A level changes only general settings; system-specific ones (address lists, proxies, admin pages,
+local login page, ClamAV, notification recipients, extra file types) stay as they are. Applying a
+level switches Security Guard on.
+
+| Level | What it sets |
+|---|---|
+| **1. Basic** | All patches, scanner blocking, attack patterns *log only*, SimpleSAMLphp: errors hidden, 10 login attempts / 10 min, deletion protection (trash first, 50 to "Deleted" and 10 permanently per user and hour), uploads *log only* with checks of the content, `X-Powered-By` removed. Same as the default settings. |
+| **2. Recommended** | Basic + share policy (password required and generated, at least 12 characters, expiry 14 days, at most 30, no "Never") + upload verification *enforce* (only images, video and documents; doubtful files to the quarantine). |
+| **3. High** | Recommended + attack patterns *block*, one session per account, SimpleSAMLphp 5 login attempts / 10 min, deletion 20 per hour to "Deleted" and permanent deletion only on the server, shares with 16+ character passwords, 7 days, at most 14. |
+
+On the first start **Skip** stores the default settings (level Basic) without changes.
+
+*Before 1.06* the page had one column: the switch was the checkbox "Security Guard is on" in the
+"Protection" box, all settings were in one form, there was no pause and no configurator.
+
+### Section status, Reset and Undo *(since 1.07)*
+
+Every settings box shows in its top right corner how it compares with the **recommended
+settings** (level **Recommended** of the configurator; settings outside the levels: the default
+values):
+
+- **Recommended** (green check) – as recommended,
+- **Custom** (green double check) – at least one setting is **stronger** than recommended and none
+  is weaker (e.g. attack patterns *block*, an admin address list, a lower deletion limit, ClamAV);
+  the tooltip lists them,
+- **Low** (red warning) – at least one setting is **below the recommendation**; these fields are
+  outlined in orange with the recommended value next to them (e.g. "Recommended: on"), and in the
+  lists the recommended choice is marked "(recommended)".
+
+When the switch of a box is off (deletion protection, share policy, notifications, local login
+page), only the switch is compared. Settings that do not change the protection (e.g. notification
+throttle, log size) are not compared. The status changes while you edit.
+
+**Reset** (outline button next to the status) sets the recommended values of that box in the form;
+it then changes to **Undo**, which brings back the previous values. Nothing is stored until **Save
+settings** – after saving (the page reloads) Undo is gone. Reset never touches system-specific
+values outside the rules (trusted proxies, notification recipients, the key and own address of the
+local login page, the ClamAV command).
+
+The boxes **Deletion approvals** and **Upload quarantine** in the status column show the status of
+their settings (Deletion protection, Upload verification) *(since 1.08)*.
+
+*Before 1.07* the boxes had no status and no Reset. In 1.07 a script error stopped the status from
+appearing (fixed in 1.08).
 
 ## How it works and performance
 
@@ -497,7 +579,7 @@ saves something; it only needs write access to the filestore, which ResourceSpac
 The box is collapsed – click its title to open it; it opens by itself after a failed reset.
 
 **Reset plugin** (after typing `RESET`) deletes `<filestore>/security_guard`: settings, log,
-counters, deletion requests and approvals, the upload quarantine and the emergency switch file. The default settings apply afterwards. ResourceSpace data
+counters, deletion requests and approvals, the upload quarantine and the emergency switch file. The default settings apply afterwards and the configurator opens again *(since 1.06)*. ResourceSpace data
 is not changed. This cannot be undone.
 
 ## License
